@@ -14,10 +14,17 @@ const DEFAULTS = {
   mode: "auto",          // auto=自动接管 | manual=只用右键/按钮 | off=完全关闭
   forwardCookies: true,  // 带上 Cookie，会员站/登录站才下得动
   notify: true,
-  minSize: 0,            // < 该字节数不接管（0=不限）。浏览器常在下载完成后才知道大小，故仅作噪声过滤
 };
 
 const LOCAL_HOSTS = ["127.0.0.1:13391", "localhost:13391"];
+
+// 浏览器自身/商店的更新包，转交给外部下载器没有意义
+const SKIP_PATTERNS = [
+  /\.crx(\?|$)/i,
+  /^https?:\/\/chrome\.google\.com\/update2\//i,
+  /^https?:\/\/clients2\.google\.com\//i,
+  /^https?:\/\/update\.googleapis\.com\//i,
+];
 
 // ---------------------------------------------------------------- 配置 / 请求
 
@@ -177,6 +184,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
   if (!/^(https?|ftps?):/i.test(item.url)) return;          // blob:/data:/chrome: 交给浏览器
   if (item.byExtensionId === chrome.runtime.id) return;      // 我们自己的回退下载，别再抓一次
   if (LOCAL_HOSTS.some((h) => item.url.includes(h))) return;
+  if (SKIP_PATTERNS.some((re) => re.test(item.url))) return; // 浏览器/商店的更新包
   if (!(await online())) return;                             // 服务没开：不动浏览器的下载
 
   const filename = basename(item.filename);
