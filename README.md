@@ -1,17 +1,17 @@
-# idmclone
+# AI-IDM
 
-[![CI](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml/badge.svg)](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml)
+[![CI](https://github.com/XinwangTao/AI-IDM/actions/workflows/ci.yml/badge.svg)](https://github.com/XinwangTao/AI-IDM/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-A multi-connection download engine written with the **Python standard library only** — no third-party
-dependencies. It speaks HTTP/HTTPS, HLS (`m3u8`, including AES-128 encrypted segments) and FTP/FTPS,
+**AI-IDM** is a multi-connection download engine written with the **Python standard library only** —
+no third-party dependencies. It speaks HTTP/HTTPS, HLS (`m3u8`, including AES-128 encrypted segments) and FTP/FTPS,
 resumes from where it stopped, and ships an **MCP server** so AI agents can drive it.
 
 > 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
 
 ```
-$ idmclone get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
+$ ai-idm get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
   big.iso  100.0%  8 workers  12.4MB/s  done in 6.3s
 ```
 
@@ -36,12 +36,12 @@ $ idmclone get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
 ## Install
 
 ```bash
-git clone https://github.com/XinwangTao/idmclone.git
-cd idmclone
+git clone https://github.com/XinwangTao/AI-IDM.git
+cd AI-IDM
 pip install -e .
 
 # or run it without installing
-python -m idmclone get https://example.com/file.zip
+python -m ai_idm get https://example.com/file.zip
 ```
 
 Python 3.10+. No runtime dependencies.
@@ -50,48 +50,48 @@ Python 3.10+. No runtime dependencies.
 
 ```bash
 # download with 8 connections, verify the checksum afterwards
-idmclone get https://example.com/file.zip -o file.zip -n 8 --checksum sha256
+ai-idm get https://example.com/file.zip -o file.zip -n 8 --checksum sha256
 
 # inspect only: size / Range support / ETag / filename
-idmclone probe https://example.com/file.zip
+ai-idm probe https://example.com/file.zip
 
 # interrupted? run the same command again — it resumes
-idmclone get https://example.com/file.zip -o file.zip
+ai-idm get https://example.com/file.zip -o file.zip
 
 # throttle to 2 MB/s, or go through a proxy
-idmclone get https://example.com/file.zip --limit 2M --proxy socks5h://127.0.0.1:1080
+ai-idm get https://example.com/file.zip --limit 2M --proxy socks5h://127.0.0.1:1080
 
 # HLS: pick the best variant, download the segments, merge them
-idmclone hls https://example.com/master.m3u8 -o video.ts --quality best
+ai-idm hls https://example.com/master.m3u8 -o video.ts --quality best
 
 # FTP / FTPS
-idmclone get ftp://user:pass@host/path/file.iso -o file.iso -n 4
+ai-idm get ftp://user:pass@host/path/file.iso -o file.iso -n 4
 
 # persistent queue
-idmclone queue add https://example.com/a.zip -o a.zip -n 8 --priority 5
-idmclone queue run --parallel 3
-idmclone queue list
+ai-idm queue add https://example.com/a.zip -o a.zip -n 8 --priority 5
+ai-idm queue run --parallel 3
+ai-idm queue list
 
 # configuration
-idmclone config show
-idmclone config set connections=16 timeout=45
-idmclone config set-site example.com 24
-idmclone config schedule add "09:00-18:00=1M" --days mon,tue,wed,thu,fri
+ai-idm config show
+ai-idm config set connections=16 timeout=45
+ai-idm config set-site example.com 24
+ai-idm config schedule add "09:00-18:00=1M" --days mon,tue,wed,thu,fri
 ```
 
 Every command prints a JSON result, so it composes with `jq` and with scripts.
 
 ## MCP server (for AI agents)
 
-`idmclone mcp` speaks MCP over stdio. Register it with your client:
+`ai-idm mcp` speaks MCP over stdio. Register it with your client:
 
 ```json
 {
   "mcpServers": {
     "idm": {
       "command": "python",
-      "args": ["-m", "idmclone", "mcp"],
-      "env": { "PYTHONPATH": "/path/to/idmclone" }
+      "args": ["-m", "ai_idm", "mcp"],
+      "env": { "PYTHONPATH": "/path/to/AI-IDM" }
     }
   }
 }

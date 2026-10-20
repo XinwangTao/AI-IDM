@@ -1,4 +1,4 @@
-"""idmclone.ftp — FTP / FTPS 下载（多连接 + 断点续传）。
+"""ai_idm.ftp — FTP / FTPS 下载（多连接 + 断点续传）。
 
 命令集对齐 IDM 的实际用法（逆向自 FTPSession 相关字符串）：
     USER / PASS / CWD / TYPE I / NOOP / SIZE / REST <n> / RETR <path> / PASV

@@ -1,4 +1,4 @@
-"""idmclone.hls — HLS(m3u8) 下载与合并。
+"""ai_idm.hls — HLS(m3u8) 下载与合并。
 
 支持：
 - master playlist 选择码率（best / worst / 指定 index）

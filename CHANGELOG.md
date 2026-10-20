@@ -1,12 +1,24 @@
 # Changelog
 
+> **Naming:** the project is called **AI-IDM**. Before v1.11.0 it was named `idmclone`
+> (repo, distribution and CLI); `ai_idm` is the Python import package.
+
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
+
+## [1.11.0] - 2026-10-20
+
+### Changed
+- **Renamed to AI-IDM.** Repository `idmclone` -> `AI-IDM` (GitHub redirects the old URLs), distribution
+  `idmclone` -> `ai-idm`, Python package `idmclone` -> `ai_idm`, console script `idmclone` -> `ai-idm`,
+  MCP server name `idmclone` -> `ai-idm`, user data directory `%LOCALAPPDATA%\idmclone` -> `%LOCALAPPDATA%\ai-idm`.
+- `AI_IDM_HOME` is the new environment variable for the data directory; `IDMCLONE_HOME` is still honoured.
+- `python -m idmclone` becomes `python -m ai_idm`.
 
 ## [1.10.1] - 2026-10-20
 
 ### Fixed
-- **Crash on non-UTF-8 consoles.** `idmclone --help` (and any Chinese output) raised
+- **Crash on non-UTF-8 consoles.** `ai-idm --help` (and any Chinese output) raised
   `UnicodeEncodeError` under a cp1252 console — i.e. every English-locale Windows user. The CLI and
   the MCP server now force UTF-8 on stdout/stderr at startup, falling back to `errors="replace"`.
   Caught by CI on `windows-latest`; regression test in `tests/test_stdio.py`.

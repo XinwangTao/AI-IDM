@@ -1,4 +1,4 @@
-"""idmclone.config — 用户配置：默认值 + 按站点覆盖。
+"""ai_idm.config — 用户配置：默认值 + 按站点覆盖。
 
 对应逆向发现：IDM 用 `HKCU\\Software\\DownloadManager\\MCN\\<site>\\number`
 覆盖单个站点的并发数。这里用 JSON 文件做等价能力，并支持通配后缀。
@@ -28,10 +28,10 @@ DEFAULTS = {
 
 
 def home():
-    h = os.environ.get("IDMCLONE_HOME")
+    h = os.environ.get("AI_IDM_HOME") or os.environ.get("IDMCLONE_HOME")
     if not h:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        h = os.path.join(base, "idmclone")
+        h = os.path.join(base, "ai-idm")
     return h
 
 

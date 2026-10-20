@@ -13,13 +13,13 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
 
 
-from idmclone.ftp import FtpDownload  # noqa: E402
+from ai_idm.ftp import FtpDownload  # noqa: E402
 
 PAYLOAD = bytes((i * 31 + 7) & 0xFF for i in range(12 * 1024 * 1024))   # 12MB
 RESTS = []          # 每次 RETR 前的 REST 偏移
@@ -29,7 +29,7 @@ SIZE_SUPPORT = {"on": True}
 class FtpHandler(socketserver.StreamRequestHandler):
     def handle(self):
         conn = self.connection
-        conn.sendall(b"220 idmclone-test FTP\r\n")
+        conn.sendall(b"220 AI-IDM test FTP\r\n")
         offset = 0
         pasv = None
         while True:

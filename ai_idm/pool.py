@@ -1,4 +1,4 @@
-"""idmclone.pool — keep-alive 连接池（对齐 IDM 的 `Reusing connection.`）。
+"""ai_idm.pool — keep-alive 连接池（对齐 IDM 的 `Reusing connection.`）。
 
 为什么需要它：动态分块会让同一条连接连续取好几块，如果每块都重新
 TCP+TLS 握手（走代理时还要再 CONNECT 一次），开销会吃掉分块带来的收益。

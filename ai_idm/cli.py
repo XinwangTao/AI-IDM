@@ -1,4 +1,4 @@
-"""idmclone.cli — 命令行入口。"""
+"""ai_idm.cli — 命令行入口。"""
 
 from __future__ import annotations
 
@@ -355,10 +355,10 @@ def cmd_queue_retry(args):
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="idmclone",
+        prog="ai-idm",
         description="分片多连接下载器：CLI + MCP（供 AI 调用）",
     )
-    p.add_argument("--version", action="version", version=f"idmclone {__version__}")
+    p.add_argument("--version", action="version", version=f"ai-idm {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("get", help="下载一个 URL")

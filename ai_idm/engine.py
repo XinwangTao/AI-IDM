@@ -1,4 +1,4 @@
-"""idmclone.engine — 分片多连接下载引擎（stdlib only）。
+"""ai_idm.engine — 分片多连接下载引擎（stdlib only）。
 
 设计要点：
 - 先探测（HEAD，必要时回退 GET Range: 0-0），拿到总长 / ETag / Last-Modified / 是否支持 Range
@@ -27,7 +27,7 @@ MIN_SEG = 1 << 20           # 小于 2MB 的文件不分片
 SEAM = 64                   # 接缝重叠字节数（对应 IDM 日志里的 posInCmpBuff3=64）
 CHUNK_FACTOR = 4            # 动态分块：块数 ≈ 连接数 × 4（块越小，尾延迟越低）
 MAX_CHUNKS = 256            # 块数上限，避免状态文件与线程调度开销失控
-DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) idmclone/1.0"
+DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.11"
 DEFAULT_CONNECTIONS = 8
 
 

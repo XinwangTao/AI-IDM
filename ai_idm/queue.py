@@ -1,4 +1,4 @@
-"""idmclone.queue — SQLite 任务队列，跨进程持久化。
+"""ai_idm.queue — SQLite 任务队列，跨进程持久化。
 
 一个任务一行，状态机：pending → running → done / error / cancelled。
 重启后 pending 与 running（被视为中断）都可继续；running 会被回收为 pending。
@@ -39,10 +39,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_pick ON tasks(status, priority DESC, added_
 
 
 def default_db_path():
-    home = os.environ.get("IDMCLONE_HOME")
+    home = os.environ.get("AI_IDM_HOME") or os.environ.get("IDMCLONE_HOME")
     if not home:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        home = os.path.join(base, "idmclone")
+        home = os.path.join(base, "ai-idm")
     return os.path.join(home, "queue.db")
 
 

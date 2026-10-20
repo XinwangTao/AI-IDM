@@ -1,4 +1,4 @@
-"""idmclone.mcp_server — MCP stdio 服务器（换行分隔 JSON-RPC）。
+"""ai_idm.mcp_server — MCP stdio 服务器（换行分隔 JSON-RPC）。
 
 用途：让 AI 客户端（WorkBuddy / Codex / Claude Code 等）直接调用下载引擎。
 传输：stdio，消息为单行 JSON（MCP 规范）。
@@ -348,7 +348,7 @@ def _handle(msg):
         _respond(mid, {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "idmclone", "version": __version__},
+            "serverInfo": {"name": "ai-idm", "version": __version__},
         })
         return
     if method in ("notifications/initialized", "initialized"):
@@ -397,4 +397,4 @@ def serve():
         try:
             _handle(msg)
         except Exception as e:                      # noqa: BLE001
-            sys.stderr.write(f"[idmclone] handler error: {e}\n")
+            sys.stderr.write(f"[ai-idm] handler error: {e}\n")

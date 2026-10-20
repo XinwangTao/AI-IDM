@@ -11,16 +11,16 @@ A clear description of the failure. If the download produced a corrupt file, say
 
 **Command / MCP call**
 ```
-idmclone get <url> -o <path> -n 8 ...
+ai-idm get <url> -o <path> -n 8 ...
 ```
 
 **Output**
 Paste the JSON error output (`--quiet` off is fine). If it crashed, the full traceback.
 
 **Environment**
-- idmclone version (`idmclone --version`):
+- AI-IDM version (`ai-idm --version`):
 - OS / Python:
-- Server: does it support `Range`? (`idmclone probe <url>` shows `accept_ranges`)
+- Server: does it support `Range`? (`ai-idm probe <url>` shows `accept_ranges`)
 - Proxy in use? (`--proxy`, or a system proxy)
 
 **Reproduction**

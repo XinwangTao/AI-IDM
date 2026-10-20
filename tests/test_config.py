@@ -14,13 +14,13 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
 
 
-from idmclone import config as C  # noqa: E402
+from ai_idm import config as C  # noqa: E402
 
 PAYLOAD = bytes((i * 17 + 3) & 0xFF for i in range(6 * 1024 * 1024))
 RANGES = []
@@ -103,7 +103,7 @@ def main():
 
     # ---- 3. 配置文件读写 ----
     home = tempfile.mkdtemp(prefix="cfg-")
-    os.environ["IDMCLONE_HOME"] = home
+    os.environ["AI_IDM_HOME"] = home
     cfg2 = C.load()
     cfg2["connections"] = 12
     cfg2["site_connections"]["127.0.0.1"] = 3
@@ -113,10 +113,10 @@ def main():
     results.append(("io-roundtrip", ok3, {"path": C.config_path()}))
 
     # ---- 4. CLI config set-site / show ----
-    env = dict(os.environ, IDMCLONE_HOME=home, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-    subprocess.run([sys.executable, "-m", "idmclone", "config", "set-site", "demo.test", "24"],
+    env = dict(os.environ, AI_IDM_HOME=home, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
+    subprocess.run([sys.executable, "-m", "ai_idm", "config", "set-site", "demo.test", "24"],
                    cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    show = subprocess.run([sys.executable, "-m", "idmclone", "config", "show"],
+    show = subprocess.run([sys.executable, "-m", "ai_idm", "config", "show"],
                           cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     ok4 = '"demo.test": 24' in show.stdout.replace("\n", " ") or '"demo.test":24' in show.stdout
     results.append(("cli-config", ok4, {"show_head": show.stdout[:60].replace("\n", " ")}))
@@ -128,7 +128,7 @@ def main():
     dest = os.path.join(home, "out.bin")
     RANGES.clear()
     INFLIGHT.update({"cur": 0, "max": 0})
-    p = subprocess.run([sys.executable, "-m", "idmclone", "get", url, "-o", dest, "-q"],
+    p = subprocess.run([sys.executable, "-m", "ai_idm", "get", url, "-o", dest, "-q"],
                        cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     # 首段按 IDM 的做法不带 Range（纯 GET），所以这里把 None 也算一票
     distinct = len({"(none)" if r is None else r for r in RANGES})

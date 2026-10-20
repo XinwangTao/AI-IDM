@@ -1,4 +1,4 @@
-"""idmclone.proxy — 代理支持：HTTP 代理、SOCKS5、SOCKS5H、Windows 系统代理。
+"""ai_idm.proxy — 代理支持：HTTP 代理、SOCKS5、SOCKS5H、Windows 系统代理。
 
 urllib 原生只支持 HTTP 代理，这里补一个 SOCKS5 的 connection 层：
 握手完成后直接复用 http.client 的其余逻辑，HTTPS 再在隧道上套 TLS。

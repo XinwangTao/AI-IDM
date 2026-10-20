@@ -12,7 +12,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
@@ -22,7 +22,7 @@ except Exception:
 def run(args, encoding="cp1252", timeout=60):
     env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING=encoding)
     # 子进程会把自己切到 UTF-8，所以按 utf-8 解码；PYTHONIOENCODING 只用来模拟"非 UTF-8 控制台"
-    return subprocess.run([sys.executable, "-m", "idmclone"] + args,
+    return subprocess.run([sys.executable, "-m", "ai_idm"] + args,
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", env=env, cwd=ROOT, timeout=timeout)
 
@@ -40,7 +40,7 @@ def main():
     # ---- 2. MCP 在 cp1252 下能正常握手（JSON 里含中文）----
     env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING="cp1252")
     err = ""
-    proc = subprocess.Popen([sys.executable, "-m", "idmclone", "mcp"],
+    proc = subprocess.Popen([sys.executable, "-m", "ai_idm", "mcp"],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8",
                             env=env, cwd=ROOT)
@@ -56,7 +56,7 @@ def main():
                                      "method": "tools/list", "params": {}}) + "\n")
         proc.stdin.flush()
         tools = json.loads(proc.stdout.readline())["result"]["tools"]
-        ok = info["name"] == "idmclone" and len(tools) >= 10
+        ok = info["name"] == "ai-idm" and len(tools) >= 10
         results.append(("mcp-cp1252", ok, {"tools": len(tools)}))
     finally:
         proc.stdin.close()

@@ -11,13 +11,13 @@ import threading
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
 
 
-from idmclone.hls import (aes128_cbc_encrypt, download_hls, parse_media,  # noqa: E402
+from ai_idm.hls import (aes128_cbc_encrypt, download_hls, parse_media,  # noqa: E402
                           parse_master)
 
 KEY = bytes.fromhex("2b7e151628aed2a6abf7158809cf4f3c")
@@ -109,7 +109,7 @@ def main():
     results = []
 
     # 0. AES 自洽（加密→解密）
-    from idmclone.hls import aes128_cbc_decrypt
+    from ai_idm.hls import aes128_cbc_decrypt
     ok_aes = aes128_cbc_decrypt(KEY, IV, aes128_cbc_encrypt(KEY, IV, b"hello hls" * 100)) == b"hello hls" * 100
     results.append(("aes-roundtrip", ok_aes, {"len": len(b"hello hls" * 100)}))
 

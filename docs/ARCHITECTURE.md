@@ -1,7 +1,7 @@
 # Architecture
 
 ```
-idmclone/
+ai_idm/
 ├── engine.py      HTTP(S) download engine: probe, chunk planning, workers, seams, verification
 ├── pool.py        keep-alive connection pool (http.client) — direct / HTTP proxy / SOCKS5
 ├── proxy.py       proxy parsing, SOCKS5 handshake, urllib opener wiring
@@ -9,6 +9,7 @@ idmclone/
 ├── hls.py         m3u8 parsing, AES-128-CBC, segment download + merge
 ├── queue.py       SQLite job queue and parallel runner
 ├── config.py      user config: defaults, per-site concurrency, time-of-day limits
+├── stdio.py       force UTF-8 on stdout/stderr (Windows cp1252 safety)
 ├── cli.py         argparse front end, JSON output
 └── mcp_server.py  MCP stdio server exposing 12 tools
 ```
@@ -97,8 +98,8 @@ otherwise produces a file with a quiet hole at a chunk boundary.
 |---|---|
 | `<dest>.idmpart` | the data being downloaded (pre-truncated to `total`) |
 | `<dest>.idmpart.json` | url, dest, total, etag, last_modified, per-chunk `{i,s,e,d}` |
-| `%LOCALAPPDATA%\idmclone\queue.db` | SQLite queue (`IDMCLONE_HOME` overrides) |
-| `%LOCALAPPDATA%\idmclone\config.json` | user config |
+| `%LOCALAPPDATA%\ai-idm\queue.db` | SQLite queue (`AI_IDM_HOME` overrides) |
+| `%LOCALAPPDATA%\ai-idm\config.json` | user config |
 
 ## Configuration precedence
 
@@ -109,7 +110,7 @@ otherwise produces a file with a quiet hole at a chunk boundary.
 - `proxy`, `timeout`, `max_retries`: CLI explicit → global default
 
 Boolean toggles (`seam_verify`, `open_range`, `dynamic_chunks`, `keepalive`) live in the config file and
-are coerced from strings, so `idmclone config set keepalive=false` does what you expect.
+are coerced from strings, so `ai-idm config set keepalive=false` does what you expect.
 
 ## MCP server
 

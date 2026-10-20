@@ -13,13 +13,13 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
 
 
-from idmclone.engine import Download, probe  # noqa: E402
+from ai_idm.engine import Download, probe  # noqa: E402
 
 PAYLOAD = bytes((i * 37 + 11) & 0xFF for i in range(8 * 1024 * 1024))  # 8 MB
 RANGES = []
@@ -143,7 +143,7 @@ def main():
 
     # --- 5. MCP stdio 协议 ---
     proc = subprocess.Popen(
-        [sys.executable, "-m", "idmclone", "mcp"],
+        [sys.executable, "-m", "ai_idm", "mcp"],
         cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
     )
@@ -165,7 +165,7 @@ def main():
     text = call["result"]["content"][0]["text"]
     info = json.loads(text)
     results.append(("mcp-stdio",
-                    init["result"]["serverInfo"]["name"] == "idmclone"
+                    init["result"]["serverInfo"]["name"] == "ai-idm"
                     and len(tools["result"]["tools"]) >= 6
                     and info["total"] == len(PAYLOAD),
                     {"tools": len(tools["result"]["tools"]), "probe_total": info["total"]}))

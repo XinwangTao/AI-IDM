@@ -29,13 +29,13 @@ python tests/test_seam.py
 
 | File | Responsibility |
 |---|---|
-| `idmclone/engine.py` | HTTP(S) engine: probe, chunking, workers, seams, verification |
-| `idmclone/pool.py` | keep-alive connection pool (HTTP, proxies, SOCKS5) |
-| `idmclone/proxy.py` | proxy parsing and SOCKS5 handshake |
-| `idmclone/ftp.py`, `idmclone/hls.py` | protocol front ends |
-| `idmclone/queue.py` | SQLite job queue |
-| `idmclone/config.py` | defaults, per-site overrides, schedules |
-| `idmclone/cli.py`, `idmclone/mcp_server.py` | entry points |
+| `ai_idm/engine.py` | HTTP(S) engine: probe, chunking, workers, seams, verification |
+| `ai_idm/pool.py` | keep-alive connection pool (HTTP, proxies, SOCKS5) |
+| `ai_idm/proxy.py` | proxy parsing and SOCKS5 handshake |
+| `ai_idm/ftp.py`, `ai_idm/hls.py` | protocol front ends |
+| `ai_idm/queue.py` | SQLite job queue |
+| `ai_idm/config.py` | defaults, per-site overrides, schedules |
+| `ai_idm/cli.py`, `ai_idm/mcp_server.py` | entry points |
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before touching `engine.py` — it lists the
 invariants that keep concurrent writes correct (claiming, write-position accounting, seam samples).

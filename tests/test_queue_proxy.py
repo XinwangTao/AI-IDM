@@ -16,14 +16,14 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
-    from idmclone.stdio import ensure_utf8_stdio
+    from ai_idm.stdio import ensure_utf8_stdio
     ensure_utf8_stdio()          # 输出含中文，非 UTF-8 控制台会崩
 except Exception:
     pass
 
 
-from idmclone.engine import Download  # noqa: E402
-from idmclone.queue import Queue, Runner  # noqa: E402
+from ai_idm.engine import Download  # noqa: E402
+from ai_idm.queue import Queue, Runner  # noqa: E402
 
 PAYLOAD = bytes((i * 91 + 7) & 0xFF for i in range(3 * 1024 * 1024))  # 3 MB
 

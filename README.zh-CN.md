@@ -1,16 +1,16 @@
-# idmclone
+# AI-IDM
 
-[![CI](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml/badge.svg)](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml)
+[![CI](https://github.com/XinwangTao/AI-IDM/actions/workflows/ci.yml/badge.svg)](https://github.com/XinwangTao/AI-IDM/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-**零第三方依赖**（纯 Python 标准库）的多连接下载引擎。支持 HTTP/HTTPS、HLS（`m3u8`，含 AES-128
+**AI-IDM** 是一个**零第三方依赖**（纯 Python 标准库）的多连接下载引擎。支持 HTTP/HTTPS、HLS（`m3u8`，含 AES-128
 加密分片）、FTP/FTPS，支持断点续传，并且自带 **MCP 服务器**，可以被 AI 直接调用。
 
 > English: [README.md](README.md)
 
 ```
-$ idmclone get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
+$ ai-idm get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
   big.iso  100.0%  8 连接  12.4MB/s  6.3s 完成
 ```
 
@@ -35,12 +35,12 @@ $ idmclone get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
 ## 安装
 
 ```bash
-git clone https://github.com/XinwangTao/idmclone.git
-cd idmclone
+git clone https://github.com/XinwangTao/AI-IDM.git
+cd AI-IDM
 pip install -e .
 
 # 或者不安装，直接用模块方式运行
-python -m idmclone get https://example.com/file.zip
+python -m ai_idm get https://example.com/file.zip
 ```
 
 要求 Python 3.10+，无运行时依赖。
@@ -49,48 +49,48 @@ python -m idmclone get https://example.com/file.zip
 
 ```bash
 # 8 连接下载，完成后算 sha256
-idmclone get https://example.com/file.zip -o file.zip -n 8 --checksum sha256
+ai-idm get https://example.com/file.zip -o file.zip -n 8 --checksum sha256
 
 # 只看不动：大小 / 是否支持 Range / ETag / 文件名
-idmclone probe https://example.com/file.zip
+ai-idm probe https://example.com/file.zip
 
 # 中断了就再跑一遍同样的命令——会续传
-idmclone get https://example.com/file.zip -o file.zip
+ai-idm get https://example.com/file.zip -o file.zip
 
 # 限速 2MB/s，或走代理
-idmclone get https://example.com/file.zip --limit 2M --proxy socks5h://127.0.0.1:1080
+ai-idm get https://example.com/file.zip --limit 2M --proxy socks5h://127.0.0.1:1080
 
 # HLS：选最高码率，下完分片合并
-idmclone hls https://example.com/master.m3u8 -o video.ts --quality best
+ai-idm hls https://example.com/master.m3u8 -o video.ts --quality best
 
 # FTP / FTPS
-idmclone get ftp://user:pass@host/path/file.iso -o file.iso -n 4
+ai-idm get ftp://user:pass@host/path/file.iso -o file.iso -n 4
 
 # 持久化队列
-idmclone queue add https://example.com/a.zip -o a.zip -n 8 --priority 5
-idmclone queue run --parallel 3
-idmclone queue list
+ai-idm queue add https://example.com/a.zip -o a.zip -n 8 --priority 5
+ai-idm queue run --parallel 3
+ai-idm queue list
 
 # 配置
-idmclone config show
-idmclone config set connections=16 timeout=45
-idmclone config set-site example.com 24
-idmclone config schedule add "09:00-18:00=1M" --days mon,tue,wed,thu,fri
+ai-idm config show
+ai-idm config set connections=16 timeout=45
+ai-idm config set-site example.com 24
+ai-idm config schedule add "09:00-18:00=1M" --days mon,tue,wed,thu,fri
 ```
 
 每条命令都输出 JSON，方便和 `jq`、脚本组合。
 
 ## MCP 服务器（给 AI 用）
 
-`idmclone mcp` 通过 stdio 讲 MCP。客户端里这样注册：
+`ai-idm mcp` 通过 stdio 讲 MCP。客户端里这样注册：
 
 ```json
 {
   "mcpServers": {
     "idm": {
       "command": "python",
-      "args": ["-m", "idmclone", "mcp"],
-      "env": { "PYTHONPATH": "/path/to/idmclone" }
+      "args": ["-m", "ai_idm", "mcp"],
+      "env": { "PYTHONPATH": "/path/to/AI-IDM" }
     }
   }
 }

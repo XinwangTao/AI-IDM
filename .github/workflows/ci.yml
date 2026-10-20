@@ -27,20 +27,20 @@ jobs:
           python -m pip install -e .
 
       - name: Syntax check
-        run: python -m compileall -q idmclone tests
+        run: python -m compileall -q ai_idm tests
 
       - name: CLI smoke test
         run: |
-          idmclone --version
-          idmclone --help
+          ai-idm --version
+          ai-idm --help
 
       - name: Non-UTF8 console smoke test
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:PYTHONIOENCODING = "cp1252"
-          idmclone --help | Out-Null
-          idmclone get --help | Out-Null
+          ai-idm --help | Out-Null
+          ai-idm get --help | Out-Null
 
       - name: Run test suites
         run: python tests/run_all.py
@@ -58,7 +58,7 @@ jobs:
       - name: Install from wheel
         run: |
           python -m pip install dist/*.whl
-          idmclone --version
+          ai-idm --version
       - uses: actions/upload-artifact@v4
         with:
           name: dist

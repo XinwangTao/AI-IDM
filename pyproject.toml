@@ -3,12 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "idmclone"
-description = "Multi-connection download engine with resume, HLS, FTP and an MCP server for AI agents"
+name = "ai-idm"
+description = "AI-IDM: multi-connection download engine with resume, HLS, FTP and an MCP server for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "idmclone contributors" }]
+authors = [{ name = "AI-IDM contributors" }]
 keywords = ["download", "downloader", "aria2", "mcp", "hls", "ftp", "resume"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -32,16 +32,16 @@ dynamic = ["version"]
 dev = ["build>=1.0", "twine>=5.0"]
 
 [project.scripts]
-idmclone = "idmclone.cli:main"
+ai-idm = "ai_idm.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/XinwangTao/idmclone"
-Source = "https://github.com/XinwangTao/idmclone"
-Issues = "https://github.com/XinwangTao/idmclone/issues"
-Changelog = "https://github.com/XinwangTao/idmclone/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/XinwangTao/AI-IDM"
+Source = "https://github.com/XinwangTao/AI-IDM"
+Issues = "https://github.com/XinwangTao/AI-IDM/issues"
+Changelog = "https://github.com/XinwangTao/AI-IDM/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
-packages = ["idmclone"]
+packages = ["ai_idm"]
 
 [tool.setuptools.dynamic]
-version = { attr = "idmclone.__version__" }
+version = { attr = "ai_idm.__version__" }
