@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idmclone"
+description = "Multi-connection download engine with resume, HLS, FTP and an MCP server for AI agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "idmclone contributors" }]
+keywords = ["download", "downloader", "aria2", "mcp", "hls", "ftp", "resume"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: File Transfer Protocol (FTP)",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: System :: Archiving",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["build>=1.0", "twine>=5.0"]
+
+[project.scripts]
+idmclone = "idmclone.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/1716775457damn/idmclone"
+Source = "https://github.com/1716775457damn/idmclone"
+Issues = "https://github.com/1716775457damn/idmclone/issues"
+Changelog = "https://github.com/1716775457damn/idmclone/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["idmclone"]
+
+[tool.setuptools.dynamic]
+version = { attr = "idmclone.__version__" }
