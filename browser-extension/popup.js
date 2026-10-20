@@ -102,7 +102,8 @@ $("#dl").addEventListener("click", async () => {
   if (!currentUrl) return;
   $("#dl").disabled = true;
   $("#dl").textContent = "发送中…";
-  const r = await chrome.runtime.sendMessage({ type: "add", url: currentUrl });
+  const r = await chrome.runtime.sendMessage({ type: "add", url: currentUrl })
+    .catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
   if (r && r.ok) {
     $("#dl").textContent = "已加入队列 ✓";
   } else {
