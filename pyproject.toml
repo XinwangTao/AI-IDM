@@ -35,10 +35,10 @@ dev = ["build>=1.0", "twine>=5.0"]
 idmclone = "idmclone.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/1716775457damn/idmclone"
-Source = "https://github.com/1716775457damn/idmclone"
-Issues = "https://github.com/1716775457damn/idmclone/issues"
-Changelog = "https://github.com/1716775457damn/idmclone/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/XinwangTao/idmclone"
+Source = "https://github.com/XinwangTao/idmclone"
+Issues = "https://github.com/XinwangTao/idmclone/issues"
+Changelog = "https://github.com/XinwangTao/idmclone/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = ["idmclone"]

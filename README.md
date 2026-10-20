@@ -1,6 +1,6 @@
 # idmclone
 
-[![CI](https://github.com/1716775457damn/idmclone/actions/workflows/ci.yml/badge.svg)](https://github.com/1716775457damn/idmclone/actions/workflows/ci.yml)
+[![CI](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml/badge.svg)](https://github.com/XinwangTao/idmclone/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
@@ -36,7 +36,7 @@ $ idmclone get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
 ## Install
 
 ```bash
-git clone https://github.com/1716775457damn/idmclone.git
+git clone https://github.com/XinwangTao/idmclone.git
 cd idmclone
 pip install -e .
 
