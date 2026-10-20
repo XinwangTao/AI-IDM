@@ -34,6 +34,14 @@ jobs:
           idmclone --version
           idmclone --help
 
+      - name: Non-UTF8 console smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PYTHONIOENCODING = "cp1252"
+          idmclone --help | Out-Null
+          idmclone get --help | Out-Null
+
       - name: Run test suites
         run: python tests/run_all.py
 

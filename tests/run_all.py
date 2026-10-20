@@ -23,6 +23,7 @@ TESTS = [
     "test_seam",         # 接缝 64 字节比对 / Range 写法 / 未开始块移交
     "test_dynamic",      # 动态分块 vs 静态分段
     "test_pool",         # keep-alive 连接复用
+    "test_stdio",        # 非 UTF-8 控制台（cp1252）不崩
 ]
 
 

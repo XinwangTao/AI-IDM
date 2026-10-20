@@ -491,6 +491,8 @@ def build_parser():
 
 
 def main(argv=None):
+    from .stdio import ensure_utf8_stdio
+    ensure_utf8_stdio()          # Windows 非 UTF-8 代码页下中文帮助会崩
     args = build_parser().parse_args(argv)
     return args.func(args)
 

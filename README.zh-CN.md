@@ -133,7 +133,7 @@ python tests/run_all.py           # 全部
 python tests/run_all.py -k seam   # 单个套件
 ```
 
-11 个套件 / 43 项断言，全部自包含：本地 HTTP 服务器、手写的 SOCKS5 服务端、最小 FTP 服务端，
+12 个套件 / 47 项断言，全部自包含：本地 HTTP 服务器、手写的 SOCKS5 服务端、最小 FTP 服务端，
 不需要连外网。CI 在 Linux 与 Windows、Python 3.10 / 3.12 / 3.13 上跑。
 
 值得一提的是断言方式：比如「连接复用」不是看下载是否成功，而是**数服务端实际收到几条 TCP 连接**。

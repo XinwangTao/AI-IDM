@@ -383,6 +383,8 @@ def _handle(msg):
 
 
 def serve():
+    from .stdio import ensure_utf8_stdio
+    ensure_utf8_stdio()          # JSON 里有中文，非 UTF-8 控制台会崩
     """从 stdin 读取换行分隔的 JSON-RPC，处理到 EOF。"""
     for line in sys.stdin:
         line = line.strip()

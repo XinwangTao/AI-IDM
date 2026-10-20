@@ -109,9 +109,9 @@ def main():
     # ---- 4. CLI config set-site / show ----
     env = dict(os.environ, IDMCLONE_HOME=home, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
     subprocess.run([sys.executable, "-m", "idmclone", "config", "set-site", "demo.test", "24"],
-                   cwd=ROOT, env=env, capture_output=True, text=True)
+                   cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     show = subprocess.run([sys.executable, "-m", "idmclone", "config", "show"],
-                          cwd=ROOT, env=env, capture_output=True, text=True)
+                          cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     ok4 = '"demo.test": 24' in show.stdout.replace("\n", " ") or '"demo.test":24' in show.stdout
     results.append(("cli-config", ok4, {"show_head": show.stdout[:60].replace("\n", " ")}))
 
@@ -123,7 +123,7 @@ def main():
     RANGES.clear()
     INFLIGHT.update({"cur": 0, "max": 0})
     p = subprocess.run([sys.executable, "-m", "idmclone", "get", url, "-o", dest, "-q"],
-                       cwd=ROOT, env=env, capture_output=True, text=True)
+                       cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     # 首段按 IDM 的做法不带 Range（纯 GET），所以这里把 None 也算一票
     distinct = len({"(none)" if r is None else r for r in RANGES})
     expect = hashlib.sha256(PAYLOAD).hexdigest()

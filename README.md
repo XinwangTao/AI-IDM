@@ -138,7 +138,7 @@ python tests/run_all.py           # every suite
 python tests/run_all.py -k seam   # one suite
 ```
 
-11 suites / 43 checks, fully self-contained: local HTTP servers, a hand-written SOCKS5 server, a
+12 suites / 47 checks, fully self-contained: local HTTP servers, a hand-written SOCKS5 server, a
 minimal FTP server, TLS-free fixtures. CI runs them on Linux and Windows over Python 3.10 / 3.12 / 3.13.
 
 What the suites actually assert is worth knowing — e.g. connection reuse is verified by *counting TCP
