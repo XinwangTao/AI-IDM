@@ -6,6 +6,30 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.0] - 2026-10-20
+
+### Added
+- **Browser takeover.** `ai-idm serve` starts a loopback HTTP service (default `127.0.0.1:13391`)
+  that turns browser downloads into engine jobs. Ships with a Manifest V3 extension in
+  `browser-extension/` for Chrome/Edge: auto interception of `chrome.downloads.onCreated`,
+  context-menu entries (link / media / page) and a popup with live progress.
+- HTTP API: `GET /ping|/status|/status/<id>|/events|/config`, `POST /add|/cancel/<id>|/remove/<id>`,
+  plus a self-contained web panel at `/`. JSON and form-encoded bodies both accepted.
+- `POST /add` forwards `referer`, `ua`, `cookie` and arbitrary `headers`; `.m3u8` URLs (or `hls: true`)
+  go through the HLS downloader.
+- Token auth (`X-AI-IDM-Token`, constant-time compare), loopback-only binding and client check,
+  256 KB body cap, scheme allow-list and CRLF-injection filtering. Token is generated on first run
+  (`secrets.token_urlsafe`) and stored as `server_token` in `config.json`; `ai-idm token` prints it.
+- New config keys: `server_host`, `server_port`, `server_token`, `server_parallel`, `download_dir`.
+- `Download(dest_dir=…)` and `Runner(dest_dir=…)`: when no explicit destination is given, the file
+  is written into that directory under the name from `Content-Disposition`.
+- `Runner.cancel(tid)` and an active-download registry.
+- `tests/test_server.py` (8 checks); `docs/BROWSER-INTEGRATION.md`.
+
+### Fixed
+- A cancelled queue task was recorded as `done`: `Download.run()` returns a snapshot with
+  `status="cancelled"` instead of raising, and the runner now honours it.
+
 ## [1.11.0] - 2026-10-20
 
 ### Changed

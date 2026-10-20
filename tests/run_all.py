@@ -30,6 +30,7 @@ TESTS = [
     "test_dynamic",      # 动态分块 vs 静态分段
     "test_pool",         # keep-alive 连接复用
     "test_stdio",        # 非 UTF-8 控制台（cp1252）不崩
+    "test_server",       # 浏览器接管服务：鉴权 / 入队 / 路径穿越 / 取消
 ]
 
 

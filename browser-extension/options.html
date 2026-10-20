@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AI-IDM 接管设置</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#111827; --muted:#6b7280;
+          --line:#e5e7eb; --blue:#2563eb; --ok:#16a34a; --err:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#181b21; --fg:#e5e7eb; --muted:#9ca3af;
+            --line:#272b33; --blue:#60a5fa; --ok:#4ade80; --err:#f87171; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 20px; background:var(--bg); color:var(--fg);
+         font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:18px; margin-bottom:14px; }
+  h2 { font-size:14px; margin:0 0 12px; }
+  label.f { display:block; font-size:12px; color:var(--muted); margin:12px 0 5px; }
+  input[type=text], input[type=password], input[type=number], select {
+    width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+    background:var(--bg); color:var(--fg); font:inherit; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; }
+  .checks { margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+  .checks label { display:flex; gap:8px; align-items:center; font-size:13px; }
+  .actions { display:flex; gap:10px; align-items:center; margin-top:18px; }
+  button { padding:8px 18px; border:0; border-radius:8px; font:inherit; cursor:pointer;
+           background:var(--blue); color:#fff; }
+  button.ghost { background:transparent; color:var(--blue); border:1px solid var(--line); }
+  #msg { font-size:12px; color:var(--muted); }
+  #msg.ok { color:var(--ok); } #msg.err { color:var(--err); }
+  code { background:rgba(127,127,127,.14); padding:1px 5px; border-radius:4px; font-size:12px; }
+  ol { padding-left:20px; margin:8px 0 0; font-size:13px; }
+  li { margin:6px 0; }
+  .tip { font-size:12px; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AI-IDM 下载接管</h1>
+  <div class="sub">把浏览器下载交给本地 AI-IDM 多连接下载器（下载器同时可被 AI 通过 MCP 调用）</div>
+
+  <div class="card">
+    <h2>连接本地服务</h2>
+    <div class="row">
+      <div>
+        <label class="f" for="port">端口</label>
+        <input id="port" type="number" min="1" max="65535" value="13391">
+      </div>
+    </div>
+    <label class="f" for="token">访问令牌</label>
+    <input id="token" type="text" placeholder="运行 ai-idm token 获取">
+    <div class="tip">令牌在首次启动服务时自动生成，保存在 <code>config.json</code> 的 <code>server_token</code>。</div>
+
+    <label class="f" for="mode">接管模式</label>
+    <select id="mode">
+      <option value="auto">自动 —— 浏览器每次下载都由 AI-IDM 接手（推荐）</option>
+      <option value="manual">手动 —— 只用右键菜单和弹窗按钮</option>
+      <option value="off">关闭 —— 完全不影响浏览器</option>
+    </select>
+
+    <div class="checks">
+      <label><input id="cookies" type="checkbox"> 转发 Cookie（需要登录才能下的文件必须开）</label>
+      <label><input id="notify" type="checkbox"> 接管/完成时弹系统通知</label>
+    </div>
+
+    <div class="actions">
+      <button id="save">保存</button>
+      <button id="test" class="ghost">测试连接</button>
+      <span id="msg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>启动服务</h2>
+    <ol>
+      <li>安装下载器：<code>pip install ai-idm</code>（或在本仓库直接 <code>pip install -e .</code>）</li>
+      <li>启动接管服务：<code>ai-idm serve</code> —— 它会打印地址、令牌和面板链接</li>
+      <li>把令牌填到上面，点「测试连接」</li>
+      <li>之后浏览器里点下载，文件会自动落到 <code>~/Downloads</code>（可用 <code>ai-idm serve -d 目录</code> 改）</li>
+    </ol>
+    <div class="tip">扩展源码在仓库的 <code>browser-extension/</code> 目录（用 pip 安装的话从
+      <code>github.com/XinwangTao/AI-IDM</code> 下载该目录即可）。让服务开机自启：把
+      <code>ai-idm serve</code> 做成计划任务/快捷方式；也可
+      <code>ai-idm serve --no-run</code> 只接计入队，再用 <code>ai-idm queue run</code> 消费。</div>
+  </div>
+</div>
+<script src="options.js"></script>
+</body>
+</html>

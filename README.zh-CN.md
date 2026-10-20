@@ -31,6 +31,7 @@ $ ai-idm get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
 | **FTP / FTPS** | 多连接（`REST` 续传）、`AUTH TLS` + `PROT P` |
 | **任务队列** | SQLite 持久化、原子领取、进程重启不丢、并行消费 |
 | **可被 AI 调用** | MCP stdio 服务器，12 个工具（`start_download` / `wait_download` / `queue_*` / `download_hls` 等） |
+| **浏览器接管** | `ai-idm serve` + Chrome/Edge 扩展：浏览器点下载即由本引擎接手，失败自动回退浏览器 |
 
 ## 安装
 
@@ -102,6 +103,35 @@ ai-idm config schedule add "09:00-18:00=1M" --days mon,tue,wed,thu,fri
 
 之后就可以直接说「把这几个链接下到 D:\dl，4 个并行，下完告诉我哪个失败」，由模型自己调工具。
 
+## 浏览器接管（点下载就用本引擎）
+
+跟 IDM 同构：浏览器扩展 → 本机回环 HTTP 服务 → 下载引擎。
+
+```bash
+ai-idm serve
+#   地址    : http://127.0.0.1:13391
+#   令牌    : 3Qk...（自动生成并存进 config.json）
+#   下载目录: C:\Users\you\Downloads
+#   面板    : http://127.0.0.1:13391/?token=...
+```
+
+1. `chrome://extensions` → 开发者模式 → 「加载已解压的扩展程序」→ 选 `browser-extension/`
+2. 首次安装自动弹出设置页，粘贴上面的令牌，点「测试连接」
+3. 之后浏览器里点下载就由 AI-IDM 多连接接管；文件落到 `~/Downloads`
+
+三条入口：**自动接管**（取消浏览器下载后转交，失败回退浏览器）、**右键菜单**（链接/媒体/页面）、
+**弹窗按钮**（当前标签页 + 实时进度）。也支持把 Cookie / Referer 一起带过去，登录站才下得动。
+
+除扩展外，任何脚本都能直接调本地 API：
+
+```bash
+curl -X POST http://127.0.0.1:13391/add \
+  -H "X-AI-IDM-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/big.iso","connections":16}'
+```
+
+接口清单、安全模型、限制与排查见 [docs/BROWSER-INTEGRATION.md](docs/BROWSER-INTEGRATION.md)。
+
 ## 工作原理
 
 ```
@@ -133,7 +163,7 @@ python tests/run_all.py           # 全部
 python tests/run_all.py -k seam   # 单个套件
 ```
 
-12 个套件 / 47 项断言，全部自包含：本地 HTTP 服务器、手写的 SOCKS5 服务端、最小 FTP 服务端，
+13 个套件 / 55 项断言，全部自包含：本地 HTTP 服务器、手写的 SOCKS5 服务端、最小 FTP 服务端，
 不需要连外网。CI 在 Linux 与 Windows、Python 3.10 / 3.12 / 3.13 上跑。
 
 值得一提的是断言方式：比如「连接复用」不是看下载是否成功，而是**数服务端实际收到几条 TCP 连接**。
@@ -143,8 +173,8 @@ python tests/run_all.py -k seam   # 单个套件
 
 | 未实现 | 说明 |
 |---|---|
-| GUI | 只有 CLI + MCP |
-| 浏览器集成 | 需要 WFP 过滤驱动、浏览器扩展、native messaging |
+| GUI | 只有 CLI + MCP + 网页面板（`ai-idm serve` 自带） |
+| `blob:` / `data:` / POST 表单下载 | 浏览器不给可重放的 URL，扩展会交回浏览器 |
 | DASH（`.mpd`） | 只做了 HLS |
 | DRM（Widevine 等） | 设计上不做 |
 | PAC 脚本 | 需要 JS 引擎；可用显式代理或 `auto` |

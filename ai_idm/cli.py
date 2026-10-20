@@ -279,6 +279,23 @@ def cmd_mcp(args):
     return 0
 
 
+def cmd_serve(args):
+    from . import server as srvmod
+    srvmod.serve(host=args.host, port=args.port, token=args.token,
+                 parallel=args.parallel, download_dir=args.dir,
+                 run_downloads=not args.no_run, quiet=args.quiet)
+    return 0
+
+
+def cmd_token(args):
+    from . import server as srvmod
+    cfg = cfgmod.load()
+    tok = srvmod.ensure_token(cfg)
+    print(json.dumps({"ok": True, "token": tok,
+                      "port": cfg.get("server_port") or 13391}, ensure_ascii=False))
+    return 0
+
+
 # ---------------------------------------------------------------- 队列
 
 def _queue(args):
@@ -423,6 +440,20 @@ def build_parser():
 
     m = sub.add_parser("mcp", help="以 MCP stdio 服务器运行（供 WorkBuddy/Codex/Claude 调用）")
     m.set_defaults(func=cmd_mcp)
+
+    sv = sub.add_parser("serve", help="启动浏览器接管服务（本地 HTTP API + 面板）")
+    sv.add_argument("--host", default=None, help="监听地址（默认 127.0.0.1，勿设 0.0.0.0）")
+    sv.add_argument("--port", type=int, default=None, help="端口（默认取配置，13391）")
+    sv.add_argument("--token", default=None, help="指定令牌（默认自动生成并保存）")
+    sv.add_argument("-p", "--parallel", type=int, default=None, help="并行下载任务数（默认 2）")
+    sv.add_argument("-d", "--dir", default=None, help="下载目录（默认 ~/Downloads）")
+    sv.add_argument("--no-run", action="store_true",
+                    help="只接计入队，不自动下载（另开 ai-idm queue run 消费）")
+    sv.add_argument("-q", "--quiet", action="store_true")
+    sv.set_defaults(func=cmd_serve)
+
+    tk = sub.add_parser("token", help="打印/生成接管服务令牌")
+    tk.set_defaults(func=cmd_token)
 
     cp = sub.add_parser("config", help="查看/修改配置（默认值、按站点并发）")
     csub = cp.add_subparsers(dest="action", required=True)

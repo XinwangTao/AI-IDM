@@ -24,7 +24,21 @@ DEFAULTS = {
     "dynamic_chunks": True,       # 动态分块：块数≈连接数×4，归属运行时决定（IDM 的做法）
     "keepalive": True,            # 连接复用：同一 worker 连续取块复用同一条 TCP（IDM 的 Reusing connection.）
     "speed_schedule": [],         # [{"days":[0,1,2,3,4],"start":"09:00","end":"18:00","limit_bps":1048576}]
+    # ---- 浏览器接管服务（ai-idm serve）----
+    "server_host": "127.0.0.1",   # 只监听回环，不对外暴露
+    "server_port": 13391,
+    "server_token": "",           # 首次 serve 自动生成，扩展里填同一个值
+    "server_parallel": 2,         # 同时下载的任务数
+    "download_dir": "",           # 空=自动（~/Downloads，没有则当前目录）
 }
+
+
+def default_download_dir():
+    d = os.environ.get("AI_IDM_DOWNLOAD_DIR") or ""
+    if d:
+        return d
+    p = os.path.join(os.path.expanduser("~"), "Downloads")
+    return p if os.path.isdir(p) else os.getcwd()
 
 
 def home():

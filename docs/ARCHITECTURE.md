@@ -11,11 +11,13 @@ ai_idm/
 ├── config.py      user config: defaults, per-site concurrency, time-of-day limits
 ├── stdio.py       force UTF-8 on stdout/stderr (Windows cp1252 safety)
 ├── cli.py         argparse front end, JSON output
+├── server.py      browser-takeover HTTP service (token auth, queue API, web panel)
 └── mcp_server.py  MCP stdio server exposing 12 tools
 ```
 
 Everything is standard library only. `engine.py` is the core; the rest is either a protocol
-front end (`ftp`, `hls`), a scheduling layer (`queue`), or an entry point (`cli`, `mcp_server`).
+front end (`ftp`, `hls`), a scheduling layer (`queue`), or an entry point (`cli`, `mcp_server`,
+`server`).
 
 ## Download lifecycle (`engine.Download.run`)
 
@@ -117,3 +119,27 @@ are coerced from strings, so `ai-idm config set keepalive=false` does what you e
 `mcp_server.py` implements the MCP stdio transport by hand: newline-delimited JSON-RPC, `initialize` /
 `tools/list` / `tools/call`. Downloads are held in an in-process registry so `start_download` can
 return immediately and `wait_download` can block on the same object.
+
+## Browser takeover service
+
+```
+extension  ──POST /add──▶  server.Handler ──▶ Queue (SQLite) ──▶ Runner ──▶ engine.Download
+           ◀─GET /status──                (claim_next)      (parallel N)   dest_dir=download_dir
+```
+
+`server.py` is a `ThreadingHTTPServer` bound to loopback. Every request that can *cause* something
+(`/add`, `/cancel`, `/remove`) or *reveal* something (`/status`, `/events`, `/config`) requires the
+`X-AI-IDM-Token` header (or `?token=`), compared with `hmac.compare_digest`. `/ping` is open so the
+extension can tell "service down" (leave the browser download alone) from "service up" (take over).
+
+Two design consequences worth noting:
+
+- **Destination resolution.** The extension only knows the URL, so `Download` gained `dest_dir`:
+  when no explicit path is given, the engine probes first and writes the `Content-Disposition`
+  filename *into* that directory. Nothing has to pre-guess the name.
+- **Cancellation.** `Download.run()` returns a snapshot with `status="cancelled"` rather than
+  raising, so `Runner` keeps a `tid → Download` registry and translates that into a queue row
+  update; without it a cancelled task used to be recorded as `done`.
+
+HLS jobs from `/add` stay in memory (`hls-…` ids) because the HLS downloader has no resumable
+state file to reconcile with the queue on restart.

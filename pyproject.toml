@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-idm"
-description = "AI-IDM: multi-connection download engine with resume, HLS, FTP and an MCP server for AI agents"
+description = "AI-IDM: multi-connection download engine with resume, HLS, FTP, browser takeover and an MCP server for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "AI-IDM contributors" }]
-keywords = ["download", "downloader", "aria2", "mcp", "hls", "ftp", "resume"]
+keywords = ["download", "downloader", "aria2", "mcp", "hls", "ftp", "resume", "browser-extension"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

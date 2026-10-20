@@ -32,6 +32,7 @@ $ ai-idm get https://example.com/big.iso -o ~/Downloads/big.iso -n 8
 | **FTP / FTPS** | multi-connection via `REST`, `AUTH TLS` + `PROT P` |
 | **Queue** | SQLite job queue, atomic claim, survives restarts, parallel workers |
 | **AI-ready** | MCP stdio server with 12 tools (`start_download`, `wait_download`, `queue_*`, `download_hls`, …) |
+| **Browser takeover** | `ai-idm serve` + a Chrome/Edge extension: a browser download is handed to this engine, falling back to the browser if anything fails |
 
 ## Install
 
@@ -104,6 +105,37 @@ Tools: `probe_url`, `start_download`, `download_status`, `wait_download`, `cance
 An agent can then be told *"download these three URLs into `D:\dl`, 4 in parallel, tell me which
 ones failed"* and it drives the tools itself.
 
+## Browser takeover (click download, get this engine)
+
+Same architecture as IDM: browser extension → loopback HTTP service → download engine.
+
+```bash
+ai-idm serve
+#   address : http://127.0.0.1:13391
+#   token   : 3Qk...  (generated on first run, stored in config.json)
+#   folder  : C:\Users\you\Downloads
+#   panel   : http://127.0.0.1:13391/?token=...
+```
+
+1. `chrome://extensions` → developer mode → "Load unpacked" → pick `browser-extension/`
+2. The options page opens on first install: paste the token, click "Test connection"
+3. From then on, browser downloads are taken over by AI-IDM and land in `~/Downloads`
+
+Three entry points: **auto** (cancel the browser download and hand the URL over — restored to the
+browser on any failure), **context menu** (link / media / page) and **popup** (current tab plus live
+progress). Cookies and Referer are forwarded, so logged-in downloads work.
+
+Any script can drive the same local API:
+
+```bash
+curl -X POST http://127.0.0.1:13391/add \
+  -H "X-AI-IDM-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/big.iso","connections":16}'
+```
+
+Endpoints, security model, limits and troubleshooting:
+[docs/BROWSER-INTEGRATION.md](docs/BROWSER-INTEGRATION.md).
+
 ## How it works
 
 ```
@@ -138,7 +170,7 @@ python tests/run_all.py           # every suite
 python tests/run_all.py -k seam   # one suite
 ```
 
-12 suites / 47 checks, fully self-contained: local HTTP servers, a hand-written SOCKS5 server, a
+13 suites / 55 checks, fully self-contained: local HTTP servers, a hand-written SOCKS5 server, a
 minimal FTP server, TLS-free fixtures. CI runs them on Linux and Windows over Python 3.10 / 3.12 / 3.13.
 
 What the suites actually assert is worth knowing — e.g. connection reuse is verified by *counting TCP
@@ -149,8 +181,8 @@ file under `tests/`.
 
 | Not implemented | Notes |
 |---|---|
-| GUI | CLI + MCP only |
-| Browser integration | Would need WFP filters, a browser extension and native messaging |
+| GUI | CLI + MCP + a web panel (`ai-idm serve` ships one) |
+| `blob:` / `data:` / POST-form downloads | The browser exposes no replayable URL; the extension hands these back |
 | DASH (`.mpd`) | HLS only |
 | DRM (Widevine, …) | Out of scope by design |
 | PAC scripts | Needs a JS engine; use an explicit proxy or `auto` |

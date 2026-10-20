@@ -155,13 +155,30 @@ class Queue:
 class Runner:
     """按并行度消费队列。"""
 
-    def __init__(self, queue, parallel=2, max_attempts=3, on_event=None):
+    def __init__(self, queue, parallel=2, max_attempts=3, on_event=None,
+                 dest_dir=None):
         self.q = queue
         self.parallel = max(1, int(parallel))
         self.max_attempts = max_attempts
         self.on_event = on_event or (lambda evt: None)
+        # dest 为空时落到这个目录（服务端接管时用，CLI 队列运行默认 None=当前目录）
+        self.dest_dir = dest_dir
+        self.active = {}                     # tid -> Download（供取消）
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads = []
+
+    def stop(self):
+        self._stop.set()
+
+    def cancel(self, tid):
+        """取消正在跑的任务；没在跑返回 False（调用方自行改库）。"""
+        with self._lock:
+            dl = self.active.get(tid)
+        if dl is None:
+            return False
+        dl.cancel()
+        return True
 
     def stop(self):
         self._stop.set()
@@ -222,6 +239,7 @@ class Runner:
             schedule=cfg.get("speed_schedule") or [],
             dynamic_chunks=bool(cfg.get("dynamic_chunks", True)),
             keepalive=bool(cfg.get("keepalive", True)),
+            dest_dir=self.dest_dir,
         )
         last_save = 0.0
 
@@ -234,8 +252,17 @@ class Runner:
             self.q.update(tid, downloaded=snap["downloaded"], total=snap["total"])
 
         dl.progress_cb = progress
+        with self._lock:
+            self.active[tid] = dl
         try:
             result = dl.run()
+            if result.get("status") == "cancelled":
+                self.q.update(tid, status="cancelled", error=None,
+                              downloaded=result.get("downloaded") or 0,
+                              total=result.get("total") or 0,
+                              finished_at=time.time())
+                self.on_event({"event": "cancelled", "id": tid})
+                return
             self.q.update(tid, status="done", dest=result.get("dest"),
                           total=result.get("total") or 0,
                           downloaded=result.get("downloaded") or 0,
@@ -249,3 +276,6 @@ class Runner:
                           finished_at=None if status == "pending" else time.time())
             self.on_event({"event": "error" if status == "error" else "retry",
                            "id": tid, "error": str(e), "attempts": attempts})
+        finally:
+            with self._lock:
+                self.active.pop(tid, None)

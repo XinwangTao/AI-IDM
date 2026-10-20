@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AI-IDM</title>
+<style>
+  :root {
+    --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+    --card:#f9fafb; --blue:#2563eb; --ok:#16a34a; --err:#dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#15181e; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2e36;
+            --card:#1b1f26; --blue:#60a5fa; --ok:#4ade80; --err:#f87171; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; width:360px; background:var(--bg); color:var(--fg);
+         font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+  header { display:flex; align-items:center; gap:8px; padding:12px 14px 10px; }
+  header img { width:22px; height:22px; }
+  .title { font-weight:600; flex:1; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.on { background:var(--ok); box-shadow:0 0 0 3px rgba(22,163,74,.15); }
+  .dot.off { background:var(--err); }
+  .hint { font-size:11px; color:var(--muted); }
+  .body { padding:0 14px 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:10px 12px; margin-bottom:10px; }
+  .url { word-break:break-all; font-size:12px; color:var(--muted); margin-bottom:8px;
+         max-height:34px; overflow:hidden; }
+  button { width:100%; padding:8px 12px; border:0; border-radius:8px; font:inherit;
+           cursor:pointer; background:var(--blue); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--blue); border:1px solid var(--line); }
+  .rows { max-height:250px; overflow:auto; }
+  .row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); }
+  .row:last-child { border-bottom:0; }
+  .nm { flex:1; min-width:0; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pct { font-size:11px; color:var(--muted); flex:none; width:38px; text-align:right; }
+  .bar { height:4px; border-radius:2px; background:var(--line); width:52px; flex:none; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; background:var(--blue); }
+  .row.done .bar > i { background:var(--ok); }
+  .row.error .bar > i { background:var(--err); }
+  footer { display:flex; justify-content:space-between; padding:8px 14px 12px;
+           border-top:1px solid var(--line); font-size:11px; color:var(--muted); }
+  a { color:var(--blue); text-decoration:none; }
+  .empty { color:var(--muted); font-size:12px; padding:8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <img src="icons/icon48.png" alt="">
+  <span class="title">AI-IDM</span>
+  <span class="dot" id="dot" title="服务状态"></span>
+</header>
+
+<div class="body">
+  <div class="card">
+    <div class="url" id="taburl">读取当前标签页…</div>
+    <button id="dl" disabled>下载当前页面</button>
+  </div>
+
+  <div class="card">
+    <div class="rows" id="rows"><div class="empty">暂无任务</div></div>
+  </div>
+</div>
+
+<footer>
+  <span id="foot">检查服务中…</span>
+  <span><a href="#" id="opts">设置</a></span>
+</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>

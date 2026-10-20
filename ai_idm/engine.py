@@ -27,7 +27,7 @@ MIN_SEG = 1 << 20           # 小于 2MB 的文件不分片
 SEAM = 64                   # 接缝重叠字节数（对应 IDM 日志里的 posInCmpBuff3=64）
 CHUNK_FACTOR = 4            # 动态分块：块数 ≈ 连接数 × 4（块越小，尾延迟越低）
 MAX_CHUNKS = 256            # 块数上限，避免状态文件与线程调度开销失控
-DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.11"
+DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.12"
 DEFAULT_CONNECTIONS = 8
 
 
@@ -307,8 +307,10 @@ class Download:
                  insecure=False, resume=True, verify=None, progress=None,
                  timeout=30, max_retries=4, state_dir=None, schedule=None,
                  verify_sample=0, verify_seam=None, open_range=None,
-                 dynamic_chunks=None, keepalive=None):
+                 dynamic_chunks=None, keepalive=None, dest_dir=None):
         self.url = url
+        # 由服务端/队列指定"落到哪个目录"：dest 为空时用探测出的文件名拼上它
+        self.dest_dir = dest_dir
         self.connections = connections
         self.min_seg = min_seg
         self.limit_bps = limit_bps
@@ -776,6 +778,9 @@ class Download:
 
             if not self.dest:
                 self.dest = self.probe_info.filename
+            if (self.dest_dir and not os.path.isabs(self.dest)
+                    and not os.path.dirname(self.dest)):
+                self.dest = os.path.join(self.dest_dir, self.dest)
             self.dest = os.path.abspath(self.dest)
             parent = os.path.dirname(self.dest)
             if parent:
