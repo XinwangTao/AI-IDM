@@ -11,6 +11,12 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+try:
+    from idmclone.stdio import ensure_utf8_stdio
+    ensure_utf8_stdio()          # 汇总行含中文，非 UTF-8 控制台会崩
+except Exception:
+    pass
 TESTS = [
     "test_local",        # 分片 / 续传 / 降级 / MCP 协议
     "test_queue_proxy",  # SQLite 队列 / SOCKS5 隧道
