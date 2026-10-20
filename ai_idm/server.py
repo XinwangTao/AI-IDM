@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import collections
 import hmac
-import html
 import json
 import os
 import re
@@ -82,16 +81,6 @@ def clean_headers(raw):
             continue
         out[k] = v
     return out
-
-
-def _human(n):
-    if not n:
-        return "-"
-    v = float(n)
-    for u in ("B", "KB", "MB", "GB", "TB"):
-        if v < 1024 or u == "TB":
-            return f"{v:.1f}{u}" if u != "B" else f"{int(v)}B"
-        v /= 1024
 
 
 # ---------------------------------------------------------------- 服务
