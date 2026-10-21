@@ -143,7 +143,8 @@ async function pollOnce() {
         setTimeout(() => bumpBadge(), 6000);
       }
     }
-    await bumpBadge();
+    // 只有还有未完成任务时才刷新计数，否则会把刚设的 ✓ / ! 覆盖掉
+    if (PENDING.size) await bumpBadge();
     if (!PENDING.size && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   } catch (_) { /* 服务暂时不可达，下一轮再试 */ }
 }
