@@ -24,6 +24,11 @@ function basename(p) {
   return String(p).replace(/\\/g, "/").split("/").filter(Boolean).pop() || p;
 }
 
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 async function api(path, opt = {}) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), opt.timeout || 4000);
@@ -68,10 +73,15 @@ function render(tasks) {
     const st = t.status || "";
     const name = basename(t.dest) || basename(t.url) || t.url;
     const pct = Math.max(0, Math.min(100, t.percent || 0));
-    return `<div class="row ${st}" title="${(t.error || t.url || "").replace(/"/g, "&quot;")}">
-      <span class="nm">${name}</span>
+    // 进行中可取消（保留断点）；已结束可移除（只删记录不删文件）
+    const active = st === "pending" || st === "running";
+    const act = `<button class="act" data-act="${active ? "cancel" : "remove"}"
+      data-id="${esc(t.id)}">${active ? "取消" : "移除"}</button>`;
+    return `<div class="row ${st}" title="${esc(t.error || t.url || "")}">
+      <span class="nm">${esc(name)}</span>
       <span class="bar"><i style="width:${pct}%"></i></span>
       <span class="pct">${pct.toFixed(0)}%</span>
+      ${act}
     </div>`;
   }).join("");
 }
@@ -120,6 +130,20 @@ $("#dl").addEventListener("click", async () => {
 $("#opts").addEventListener("click", (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();
+});
+
+// 列表按钮用事件委托：refresh() 每 1.5s 重写 innerHTML，监听器必须挂在容器上
+$("#rows").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button.act");
+  if (!btn || btn.disabled) return;
+  const verb = btn.dataset.act === "cancel" ? "取消" : "移除";
+  btn.disabled = true;
+  try {
+    await api(`/${btn.dataset.act}/${encodeURIComponent(btn.dataset.id)}`, { method: "POST" });
+  } catch (err) {
+    $("#foot").textContent = `${verb}失败：${err.message || err}`;
+  }
+  refresh();
 });
 
 (async () => {

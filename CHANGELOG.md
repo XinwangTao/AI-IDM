@@ -6,6 +6,18 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.4.0 - 2026-10-21
+
+### Added
+- **弹窗任务管理。** 任务列表每一行带操作按钮：进行中（pending/running）显示「取消」
+  （`POST /cancel/<id>`，运行中的会中断并保留断点），已结束（done/error/cancelled）显示
+  「移除」（`POST /remove/<id>`，只删记录不删文件）。操作后立即刷新列表，失败原因显示在
+  底部状态栏。此前弹窗只能看不能管，要取消得去网页面板。
+
+### Fixed
+- 任务名/错误信息渲染改为 HTML 转义：名称可能来自远端 `Content-Disposition`，此前直接
+  拼进 innerHTML，存在注入面。
+
 ## Extension 1.3.0 - 2026-10-21
 
 ### Added
