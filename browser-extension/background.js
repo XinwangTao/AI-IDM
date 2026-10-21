@@ -16,14 +16,27 @@ const DEFAULTS = {
   notify: true,
 };
 
-const LOCAL_HOSTS = ["127.0.0.1:13391", "localhost:13391"];
+// 回环地址（任意端口）都不接管：服务/面板经回环触发的下载必须豁免（服务改端口后
+// 否则会形成取消-重交回环），本机自建站点的下载走多连接也没有收益。
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
-// 浏览器自身/商店的更新包，转交给外部下载器没有意义
+function isLoopback(url) {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(url).hostname);
+  } catch (_) {
+    return /\/\/(127\.0\.0\.1|localhost|\[::1\])([:/?#]|$)/i.test(url); // 解析失败退回字符串匹配
+  }
+}
+
+// 浏览器自身/商店/Edge 的更新包，转交给外部下载器没有意义
 const SKIP_PATTERNS = [
   /\.crx(\?|$)/i,
   /^https?:\/\/chrome\.google\.com\/update2\//i,
   /^https?:\/\/clients2\.google\.com\//i,
   /^https?:\/\/update\.googleapis\.com\//i,
+  /^https?:\/\/edge\.microsoft\.com\//i,
+  /^https?:\/\/msedge\.api\.cdp\.microsoft\.com\//i,
+  /^https?:\/\/msedge\.b\.tlu\.dl\.delivery\.mp\.microsoft\.com\//i,
 ];
 
 // ---------------------------------------------------------------- 配置 / 请求
@@ -330,7 +343,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
   if (!item || !item.url) return;
   if (!/^(https?|ftps?):/i.test(item.url)) return;          // blob:/data:/chrome: 交给浏览器
   if (item.byExtensionId === chrome.runtime.id) return;      // 我们自己的回退下载，别再抓一次
-  if (LOCAL_HOSTS.some((h) => item.url.includes(h))) return;
+  if (isLoopback(item.url)) return;                          // 回环任意端口：服务/本机来源不接管
   if (SKIP_PATTERNS.some((re) => re.test(item.url))) return; // 浏览器/商店的更新包
   if (!(await online())) return;                             // 服务没开：不动浏览器的下载
 

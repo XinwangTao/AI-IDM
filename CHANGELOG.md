@@ -6,6 +6,17 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.8.0 - 2026-10-21
+
+### Fixed
+- **自动接管的回环豁免放宽到任意端口。** 原先只豁免 `127.0.0.1:13391 / localhost:13391`
+  （硬编码），`ai-idm serve --port 13392` 换端口后，服务/面板经回环触发的下载会被扩展
+  接管并取消重交，形成回环。现在解析 URL hostname，凡回环地址（127.0.0.1 / localhost /
+  [::1]）无论端口一律不接管；URL 解析失败退回字符串匹配。代价是本机自建站点的下载不再
+  被接管（多连接对同机下载没有收益）。
+- **SKIP_PATTERNS 补 Edge 更新域名。** `edge.microsoft.com` / `msedge.api.cdp.microsoft.com` /
+  `msedge.b.tlu.dl.delivery.mp.microsoft.com` 三类 Edge 自身更新包不再被误接管。
+
 ## Extension 1.7.0 - 2026-10-21
 
 ### Fixed

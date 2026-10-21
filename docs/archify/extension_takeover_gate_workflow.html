@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Archify · extension_takeover_gate</title>
+<style>
+  body { font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f6f7f9; color: #1f2430; }
+  header { padding: 18px 28px; background: #1f2430; color: #fff; }
+  header h1 { margin: 0; font-size: 18px; }
+  header .meta { opacity: .75; font-size: 12.5px; margin-top: 4px; }
+  .banner { padding: 10px 28px; background: #fff7ed; border-bottom: 1px solid #fed7aa; color: #9a3412; font-weight: 600; }
+  main { max-width: 1060px; margin: 0 auto; padding: 20px 28px 60px; }
+  h2 { font-size: 15px; margin: 30px 0 12px; }
+  .lanes { display: flex; gap: 36px; align-items: flex-start; flex-wrap: wrap; }
+  .col { flex: 1 1 420px; }
+  .col h3 { font-size: 13px; color: #475569; margin: 0 0 10px; }
+  .node { border: 1.5px solid #2563eb; background: #fff; border-radius: 10px; padding: 9px 14px; max-width: 460px; }
+  .node .id { font-size: 11px; color: #94a3b8; font-weight: 700; }
+  .node .label { font-weight: 600; }
+  .node .note { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .start { border-color: #16a34a; }
+  .decision { border-style: dashed; border-color: #d97706; }
+  .end { border-color: #334155; }
+  .new2 { box-shadow: 0 0 0 2.5px #ddd6fe; }
+  .fallback { border-style: dashed; border-color: #94a3b8; background: #f8fafc; }
+  .fallback .label, .fallback .note { color: #475569; }
+  .arrow { color: #475569; margin: 4px 0 4px 22px; font-size: 13px; }
+  .arrow small { color: #94a3b8; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 12.5px; }
+  th, td { border: 1px solid #e2e8f0; padding: 5px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; }
+  tr.v2 td { background: #faf5ff; }
+  code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Archify · 自动接管门禁（v2：回环任意端口 + Edge 更新域名）</h1>
+  <div class="meta">name: extension_takeover_gate · kind: workflow · 创建: 2026-10-21 · 主路径 5 + 出口 3 = 8 节点（≤12 合规）· 旁路 JSON: extension_takeover_gate_workflow.json · 衔接：接管后的跟踪见 extension_tracking_workflow</div>
+</header>
+<div class="banner">状态：待确认（L1-C）—— 确认前不写流程代码。本批只改 browser-extension/background.js 的门禁判定（n2 两处条件放宽），抢占时序与全部回退路径保持现状。</div>
+<main>
+
+<h2>批次范围</h2>
+<ul>
+  <li><b>动机</b>：① 回环豁免硬编码 <code>127.0.0.1:13391 / localhost:13391</code>（background.js:19）——服务一旦改端口（如 13392），本机服务/面板触发的下载会被扩展接管，形成取消-重交的回环风险；② <code>SKIP_PATTERNS</code> 只覆盖 Chrome/商店更新域名，Edge 用户浏览器自身更新包（.crx/ms-download）会被误接管。</li>
+  <li><b>In</b>：<code>background.js</code> — 回环豁免放宽为<b>任意端口</b>（解析 URL hostname ∈ 127.0.0.1 / localhost / [::1] / ::1；解析失败退回字符串包含匹配）；SKIP_PATTERNS 补 Edge 更新域名 3 条。</li>
+  <li><b>Out</b>：content.js / server / engine；手动模式与右键/弹窗入口（不经过本门禁）；取消/erase 时序参数；接管后的跟踪流程（已有图）。</li>
+</ul>
+
+<div class="lanes">
+  <div class="col">
+    <h3>主路径（现状行为保持，n2 两处放宽）</h3>
+    <div class="node start"><div class="id">n1 · start</div><div class="label">浏览器下载创建</div><div class="note">chrome.downloads.onCreated(item)；仅 mode=auto 进入本流程</div></div>
+    <div class="arrow">↓</div>
+    <div class="node decision new2"><div class="id">n2 · decision（本批放宽两处）</div><div class="label">门禁判定</div><div class="note">① scheme ∈ http/https/ftp/ftps；② 非本扩展自己的回退下载；③ 非回环来源（<b>v2：任意端口</b>，不限 13391）；④ 非浏览器/商店/Edge 更新包（<b>v2：补 Edge 域名</b>）；⑤ 服务在线（/ping 900ms）</div></div>
+    <div class="arrow">↓ <small>全部通过</small></div>
+    <div class="node"><div class="id">n3 · step</div><div class="label">抢占</div><div class="note">chrome.downloads.cancel(item.id)；成功后延迟清理 .crdownload 残留（900ms/600ms，现状保持）</div></div>
+    <div class="arrow">↓ <small>取消失败 → f1</small></div>
+    <div class="node"><div class="id">n4 · step</div><div class="label">转交</div><div class="note">send() → POST /add（referer/filename/cookie），返回 tid → 进入 1.3.0 跟踪流程（图外衔接）</div></div>
+    <div class="arrow">↓ <small>转交失败 → f3</small></div>
+    <div class="node end"><div class="id">n5 · end</div><div class="label">接管完成</div><div class="note">任务已入队并跟踪；浏览器侧下载项已被清除</div></div>
+  </div>
+
+  <div class="col">
+    <h3>出口（现状回退保持）</h3>
+    <div class="node fallback"><div class="id">f1 · fallback</div><div class="label">保留浏览器下载</div><div class="note">其余门禁不过，或取消失败（已下完/取消不掉）→ 不抢，静默保留</div></div>
+    <p></p>
+    <div class="node fallback"><div class="id">f2 · fallback</div><div class="label">服务离线</div><div class="note">/ping 失败 → 不动浏览器下载（宁可放过不可抢错）</div></div>
+    <p></p>
+    <div class="node fallback"><div class="id">f3 · fallback</div><div class="label">转交回退</div><div class="note">send 失败 → 浏览器重新下载该 URL + 「AI-IDM 接管失败，已交回浏览器」通知</div></div>
+  </div>
+</div>
+
+<h2>边表（与旁路 JSON 一致）</h2>
+<table>
+  <tr><th>从</th><th>到</th><th>条件/标签</th></tr>
+  <tr><td>n1</td><td>n2</td><td></td></tr>
+  <tr><td>n2</td><td>n3</td><td>全部通过</td></tr>
+  <tr><td>n2</td><td>f1</td><td>其余门禁不过</td></tr>
+  <tr><td>n2</td><td>f2</td><td>服务离线</td></tr>
+  <tr><td>n3</td><td>n4</td><td></td></tr>
+  <tr><td>n3</td><td>f1</td><td>取消失败</td></tr>
+  <tr><td>n4</td><td>n5</td><td></td></tr>
+  <tr><td>n4</td><td>f3</td><td>转交失败</td></tr>
+</table>
+
+<h2>设计取舍（待确认点）</h2>
+<ul>
+  <li><b>回环任意端口全跳过</b>：代价是本机自建站点（如 localhost:8080）的下载也不再接管——多连接对同机下载没有收益，且服务自身经回环触发的下载（改端口场景）必须豁免，权衡后建议全跳。</li>
+  <li><b>Edge 域名取实测三类</b>：edge.microsoft.com / msedge.api.cdp.microsoft.com / msedge.b.tlu.dl.delivery.mp.microsoft.com。有实际遇到的其它域名再补。</li>
+  <li><b>只动判定不动时序</b>：cancel/erase 的 900ms/600ms 是踩过坑调出来的，本批不碰。</li>
+</ul>
+
+</main>
+</body>
+</html>
