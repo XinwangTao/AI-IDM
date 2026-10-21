@@ -127,6 +127,26 @@ def _filename_from_headers(headers, url):
     return name or "download.bin"
 
 
+# 这些状态码是「可重试的瞬时错误」：限流 / 网关抖动 / 临时不可用。
+# 配合指数退避，能扛住 GitHub 镜像站（如 xget.xi-xu.me）这种偶发 429。
+RETRY_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _open_with_retry(opener, req, timeout, max_retries=4):
+    """打开请求，遇到 RETRY_CODES 时指数退避重试（429/5xx 不再秒失败）。"""
+    last = None
+    for i in range(max_retries + 1):
+        try:
+            return opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code in RETRY_CODES and i < max_retries:
+                time.sleep(min(2 ** i * 0.5, 8))
+                continue
+            raise
+    raise last
+
+
 def probe(url, headers=None, proxy=None, insecure=False, timeout=30):
     hdrs = {"User-Agent": DEFAULT_UA}
     if headers:
@@ -138,7 +158,7 @@ def probe(url, headers=None, proxy=None, insecure=False, timeout=30):
         if extra:
             h.update(extra)
         req = urllib.request.Request(url, headers=h, method=method)
-        return opener.open(req, timeout=timeout)
+        return _open_with_retry(opener, req, timeout)
 
     resp = None
     try:

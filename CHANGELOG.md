@@ -6,6 +6,18 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.1] - 2026-10-21
+
+### Fixed
+- **GitHub release downloads no longer stall behind "download accelerator" mirrors.**
+  The extension now normalizes known GitHub mirror hosts (`xget.xi-xu.me`, `ghproxy.com`, …)
+  whose `/gh/<path>` form maps back to `github.com/<path>`, so the engine fetches the
+  canonical URL directly instead of hitting the mirror's rate limit (HTTP 429).
+- The engine `probe()` now retries on `429/500/502/503/504` with exponential backoff
+  instead of failing immediately on a transient `429`.
+- `POST /add` no longer returns the literal placeholder `"(按响应头命名)"` as `dest`; it
+  now returns `null` until the real name is known.
+
 ## [1.12.0] - 2026-10-20
 
 ### Added

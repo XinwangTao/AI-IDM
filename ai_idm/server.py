@@ -288,7 +288,7 @@ class TakeoverServer:
                 app.push_event({"event": "added", "id": tid, "url": url})
                 return self._json(200, {
                     "ok": True, "id": tid, "url": url, "status": "pending",
-                    "dest": dest or os.path.join(app.download_dir, "(按响应头命名)"),
+                    "dest": dest,
                     "connections": r["connections"],
                 })
 
