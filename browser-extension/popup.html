@@ -35,6 +35,7 @@
   .row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); }
   .row:last-child { border-bottom:0; }
   .row[data-copy] { cursor: copy; }
+  .row.copied .nm { color: var(--ok); }
   .nm { flex:1; min-width:0; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .pct { font-size:11px; color:var(--muted); flex:none; width:38px; text-align:right; }
   .bar { height:4px; border-radius:2px; background:var(--line); width:52px; flex:none; overflow:hidden; }

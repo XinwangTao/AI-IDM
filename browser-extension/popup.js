@@ -153,6 +153,8 @@ $("#rows").addEventListener("click", async (e) => {
   try {
     await navigator.clipboard.writeText(row.dataset.copy);
     $("#foot").textContent = "已复制路径";
+    row.classList.add("copied");          // 行内反馈：footer 提示会被 1.5s 刷新覆盖
+    setTimeout(() => row.classList.remove("copied"), 1200);
   } catch (_) {
     $("#foot").textContent = "复制失败（弹窗失焦时剪贴板可能不可用）";
   }

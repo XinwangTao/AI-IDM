@@ -114,6 +114,8 @@ function notify(title, message) {
   } catch (_) { /* 通知权限被拒也不影响主流程 */ }
 }
 
+let badgeHoldUntil = 0;          // ✓ / ! 徽标的保留截止：服务瞬断时不被立刻抹掉
+
 async function bumpBadge() {
   try {
     const d = await api("/status", { timeout: 2500 });
@@ -122,7 +124,7 @@ async function bumpBadge() {
     await chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
     await chrome.action.setBadgeText({ text: active ? String(active) : "" });
   } catch (_) {
-    await chrome.action.setBadgeText({ text: "" });
+    if (Date.now() > badgeHoldUntil) await chrome.action.setBadgeText({ text: "" });
   }
 }
 
@@ -235,6 +237,7 @@ async function pollOnce() {
         notify("AI-IDM 下载完成", t.dest || t.url);
         chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
         chrome.action.setBadgeText({ text: "✓" });
+        badgeHoldUntil = Date.now() + 6000;
         setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
         forget(tid);
@@ -242,6 +245,7 @@ async function pollOnce() {
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
         chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
         chrome.action.setBadgeText({ text: "!" });
+        badgeHoldUntil = Date.now() + 6000;
         setTimeout(() => bumpBadge(), 6000);
       }
     }

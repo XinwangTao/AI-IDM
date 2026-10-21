@@ -6,6 +6,14 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.8.1 - 2026-10-21
+
+### Fixed
+- **服务瞬断不再抹掉完成徽标。** 服务重启/短暂不可达时 `bumpBadge` 失败会把刚显示的
+  ✓ / ! 立刻清空；现在徽标保留 6 秒后才允许被清。
+- **点击复制增加行内反馈。** 只靠底部状态栏提示会被 1.5s 轮询刷新覆盖；现在复制的行
+  文件名绿色闪烁 1.2s。
+
 ## Extension 1.8.0 - 2026-10-21
 
 ### Fixed
