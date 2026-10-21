@@ -131,9 +131,16 @@ async function pollOnce() {
       if (t.status === "done") {
         PENDING.delete(tid);
         notify("AI-IDM 下载完成", t.dest || t.url);
+        // 系统通知被关掉时，图标上的绿勾也能说明"下完了"
+        chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
+        chrome.action.setBadgeText({ text: "✓" });
+        setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
         PENDING.delete(tid);
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
+        chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
+        chrome.action.setBadgeText({ text: "!" });
+        setTimeout(() => bumpBadge(), 6000);
       }
     }
     await bumpBadge();
