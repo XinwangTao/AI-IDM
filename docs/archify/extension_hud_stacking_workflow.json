@@ -1,0 +1,47 @@
+{
+  "name": "extension_hud_stacking",
+  "title": "同页多任务浮层堆叠",
+  "kind": "workflow",
+  "status": "待确认（L1-C）",
+  "created": "2026-10-21",
+  "batch": {
+    "in_scope": [
+      "background.js：hud() 消息体携带 tid；track() 的初始『排队中』推送同样携带",
+      "content.js：卡片按 tid 管理（Map），多卡纵向堆叠（新卡贴近右下角）",
+      "content.js：终态停留（done 6s / error 12s，现状时长）后从 DOM 移除该卡，堆叠收缩",
+      "单任务时视觉与现状一致（同一卡片样式/文案/时长）"
+    ],
+    "out_of_scope": [
+      "弹窗任务管理（取消/移除按钮）",
+      "轮询改 SSE",
+      "服务端任何改动"
+    ],
+    "note": "页面跳转/关闭时卡片随文档销毁，background 下一轮照常推送——这是环境行为不是流程分支，不入图。"
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "需要展示任务状态", "note": "background：track() 初始推送或 pollOnce() 轮询更新（每 1.5s）" },
+    { "id": "n2", "kind": "step", "label": "组装并投递", "note": "消息 {type:\"hud\", tid, payload} 经 chrome.tabs.sendMessage 发到任务所属 tab；payload 含 phase 与三态字段" },
+    { "id": "n3", "kind": "decision", "label": "content 侧判定", "note": "payload 是否有效（含 tid、phase 已知）；该 tid 是否已有卡片" },
+    { "id": "n4", "kind": "step", "label": "建卡", "note": "无卡片：在堆叠容器末尾新建（新卡在最下方、贴近右下角）" },
+    { "id": "n5", "kind": "step", "label": "更新", "note": "已有卡片：按 tid 定位既有卡片" },
+    { "id": "n6", "kind": "step", "label": "渲染", "note": "按 phase 渲染：progress 三态（排队/连接/进度，1.2.1 行为保持）；done/error 终态样式" },
+    { "id": "n7", "kind": "decision", "label": "是否终态", "note": "progress → 下一轮；done/error → 移除流程" },
+    { "id": "n8", "kind": "end", "label": "终态停留后移除", "note": "done 6s / error 12s（现状时长）后从 DOM 移除该卡，堆叠自动收缩" },
+    { "id": "f1", "kind": "fallback", "label": "注入兜底", "note": "sendMessage 失败（SW 重启前开的老标签页无 content script）→ ensure() 注入后重推（现状保持）" },
+    { "id": "f2", "kind": "fallback", "label": "防御忽略", "note": "payload 缺 tid 或 phase 未知 → 忽略，不建卡" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4", "label": "有效但无卡片" },
+    { "from": "n3", "to": "n5", "label": "已有卡片" },
+    { "from": "n3", "to": "f2", "label": "缺 tid / phase 未知" },
+    { "from": "n4", "to": "n6" },
+    { "from": "n5", "to": "n6" },
+    { "from": "n6", "to": "n7" },
+    { "from": "n7", "to": "n1", "label": "progress（下一轮更新）" },
+    { "from": "n7", "to": "n8", "label": "done / error" },
+    { "from": "n2", "to": "f1", "label": "发送失败" },
+    { "from": "f1", "to": "n3", "label": "注入后重推" }
+  ]
+}

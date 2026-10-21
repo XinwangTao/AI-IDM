@@ -3,6 +3,9 @@
  * 为什么要有它：接管下载后浏览器自己的下载项被取消，系统通知又可能被
  * Windows 专注助手/权限拦掉，用户会以为"没下成"。这个浮层直接贴在页面
  * 右下角，显示进度/速度/结果，不依赖任何系统通知能力。
+ *
+ * 1.5.0 起按任务 id 建卡：同一标签页里多个被接管任务各自一张卡，纵向
+ * 堆叠（新卡贴近右下角、向上生长），终态停留几秒后从 DOM 移除。
  */
 
 (() => {
@@ -11,16 +14,22 @@
 
   let host = null;
   let root = null;
-  let hideTimer = null;
+  let stack = null;
+
+  const cards = new Map();     // tid -> { card, hideTimer }
 
   const CSS = `
     :host { all: initial; }
+    .stack {
+      position: fixed; right: 18px; bottom: 18px; z-index: 2147483647;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    }
     .card {
-      position: fixed; right: 18px; bottom: 18px; width: 330px;
+      width: 330px;
       font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       background: #1f2430; color: #e8ecf3; border-radius: 12px;
       box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden;
-      border: 1px solid rgba(255,255,255,.08); z-index: 2147483647;
+      border: 1px solid rgba(255,255,255,.08);
       transition: opacity .18s ease, transform .18s ease;
     }
     .card.hide { opacity: 0; transform: translateY(8px); pointer-events: none; }
@@ -48,20 +57,9 @@
     host = document.createElement("div");
     host.id = "ai-idm-hud-host";
     root = host.attachShadow({ mode: "open" });
-    root.innerHTML = `
-      <style>${CSS}</style>
-      <div class="card hide" part="card">
-        <div class="head">
-          <span class="dot"></span>
-          <span class="title">AI-IDM 下载中</span>
-          <button class="close" title="关闭">×</button>
-        </div>
-        <div class="name"></div>
-        <div class="bar"><div class="fill"></div></div>
-        <div class="meta"><span class="left">0%</span><span class="right"></span></div>
-      </div>`;
+    root.innerHTML = `<style>${CSS}</style><div class="stack"></div>`;
+    stack = root.querySelector(".stack");
     (document.body || document.documentElement).appendChild(host);
-    root.querySelector(".close").addEventListener("click", hide);
   }
 
   function fmt(n) {
@@ -72,19 +70,40 @@
     return (i === 0 ? v : v.toFixed(1)) + u[i];
   }
 
-  function show(p) {
+  function cardFor(tid) {
     ensure();
-    const card = root.querySelector(".card");
-    card.classList.remove("hide", "done", "err");
-    clearTimeout(hideTimer);
+    let c = cards.get(tid);
+    if (c) return c;
+    const card = document.createElement("div");
+    card.className = "card hide";
+    card.innerHTML = `
+      <div class="head">
+        <span class="dot"></span>
+        <span class="title">AI-IDM 下载中</span>
+        <button class="close" title="关闭">×</button>
+      </div>
+      <div class="name"></div>
+      <div class="bar"><div class="fill"></div></div>
+      <div class="meta"><span class="left">0%</span><span class="right"></span></div>`;
+    stack.appendChild(card);          // 追加到末尾 = 视觉上最贴近右下角，向上生长
+    card.querySelector(".close").addEventListener("click", () => removeCard(tid));
+    c = { card, hideTimer: null };
+    cards.set(tid, c);
+    return c;
+  }
+
+  function show(tid, p) {
+    const c = cardFor(tid);
+    c.card.classList.remove("hide", "done", "err");
+    clearTimeout(c.hideTimer);
 
     const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
-    const title = root.querySelector(".title");
-    const left = root.querySelector(".left");
-    const right = root.querySelector(".right");
-    const fill = root.querySelector(".fill");
+    const title = c.card.querySelector(".title");
+    const left = c.card.querySelector(".left");
+    const right = c.card.querySelector(".right");
+    const fill = c.card.querySelector(".fill");
 
-    // 三种状态分开显示，避免"排队中"被误读成"卡在 0%"
+    // 三种状态分开显示，避免"排队中"被误读成"卡在 0%"（1.2.1 行为保持）
     if (p.queued) {
       title.textContent = "AI-IDM 排队中…";
       left.textContent = "排队中";
@@ -103,34 +122,38 @@
         [p.speed ? fmt(p.speed) + "/s" : "", p.total ? fmt(p.total) : ""]
           .filter(Boolean).join(" · ");
     }
-    root.querySelector(".name").textContent = p.name || p.url || "";
+    c.card.querySelector(".name").textContent = p.name || p.url || "";
   }
 
-  function finish(p, ok) {
-    ensure();
-    const card = root.querySelector(".card");
-    card.classList.remove("hide");
-    card.classList.toggle("done", ok);
-    card.classList.toggle("err", !ok);
-    clearTimeout(hideTimer);
-    root.querySelector(".title").textContent = ok ? "AI-IDM 下载完成" : "AI-IDM 下载失败";
-    root.querySelector(".name").textContent = ok ? (p.dest || p.name || p.url || "") : (p.error || "未知错误");
-    root.querySelector(".fill").style.width = "100%";
-    root.querySelector(".left").textContent = ok ? "100%" : "";
-    root.querySelector(".right").textContent = ok ? fmt(p.total) : "";
-    hideTimer = setTimeout(hide, ok ? 6000 : 12000);
+  function finish(tid, p, ok) {
+    const c = cardFor(tid);
+    c.card.classList.remove("hide");
+    c.card.classList.toggle("done", ok);
+    c.card.classList.toggle("err", !ok);
+    clearTimeout(c.hideTimer);
+    c.card.querySelector(".title").textContent = ok ? "AI-IDM 下载完成" : "AI-IDM 下载失败";
+    c.card.querySelector(".name").textContent = ok ? (p.dest || p.name || p.url || "") : (p.error || "未知错误");
+    c.card.querySelector(".fill").style.width = "100%";
+    c.card.querySelector(".left").textContent = ok ? "100%" : "";
+    c.card.querySelector(".right").textContent = ok ? fmt(p.total) : "";
+    // 终态停留后从 DOM 移除（旧版只是隐藏，节点会一直留着）
+    c.hideTimer = setTimeout(() => removeCard(tid), ok ? 6000 : 12000);
   }
 
-  function hide() {
-    if (!root) return;
-    root.querySelector(".card").classList.add("hide");
+  function removeCard(tid) {
+    const c = cards.get(tid);
+    if (!c) return;
+    clearTimeout(c.hideTimer);
+    c.card.remove();
+    cards.delete(tid);
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || msg.type !== "hud") return;
+    // 防御：缺任务 id 或 phase 未知的消息不建卡
+    if (!msg || msg.type !== "hud" || !msg.tid) return;
     const p = msg.payload || {};
-    if (p.phase === "progress") show(p);
-    else if (p.phase === "done") finish(p, true);
-    else if (p.phase === "error") finish(p, false);
+    if (p.phase === "progress") show(msg.tid, p);
+    else if (p.phase === "done") finish(msg.tid, p, true);
+    else if (p.phase === "error") finish(msg.tid, p, false);
   });
 })();

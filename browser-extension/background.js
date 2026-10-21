@@ -159,10 +159,10 @@ function forget(tid) {
   persistPending();
 }
 
-function hud(tabId, payload) {
+function hud(tid, tabId, payload) {
   if (!tabId) return;
   const push = () => chrome.tabs.sendMessage(
-    tabId, { type: "hud", payload }, () => void chrome.runtime.lastError);
+    tabId, { type: "hud", tid, payload }, () => void chrome.runtime.lastError);
 
   // 扩展重载前就开着的标签页没有 content script：按需注入一次（脚本自身有幂等保护）
   let injected = false;
@@ -178,7 +178,7 @@ function hud(tabId, payload) {
   };
 
   try {
-    chrome.tabs.sendMessage(tabId, { type: "hud", payload }, () => {
+    chrome.tabs.sendMessage(tabId, { type: "hud", tid, payload }, () => {
       if (chrome.runtime.lastError) ensure();
     });
   } catch (_) { ensure(); }
@@ -207,7 +207,7 @@ async function pollOnce() {
       const t = byId.get(tid);
       if (!t) continue;
       if (t.status === "pending" || t.status === "running") {
-        hud(meta.tabId, {
+        hud(tid, meta.tabId, {
           phase: "progress",
           queued: t.status === "pending",              // 排队中（还没轮到）
           connecting: t.status === "running" && !t.total, // 已开跑但还没探到大小
@@ -218,14 +218,14 @@ async function pollOnce() {
         });
       } else if (t.status === "done") {
         forget(tid);
-        hud(meta.tabId, { phase: "done", dest: t.dest, total: t.total });
+        hud(tid, meta.tabId, { phase: "done", dest: t.dest, total: t.total });
         notify("AI-IDM 下载完成", t.dest || t.url);
         chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
         chrome.action.setBadgeText({ text: "✓" });
         setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
         forget(tid);
-        hud(meta.tabId, { phase: "error", error: t.error || t.status });
+        hud(tid, meta.tabId, { phase: "error", error: t.error || t.status });
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
         chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
         chrome.action.setBadgeText({ text: "!" });
@@ -249,7 +249,7 @@ async function track(tid, url, tabId, name) {
   }
   PENDING.set(tid, { url, tabId, name });
   persistPending();
-  hud(tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
+  hud(tid, tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
   if (!pollTimer) pollTimer = setInterval(pollOnce, 1500);
 }
 

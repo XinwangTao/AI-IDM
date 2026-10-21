@@ -6,6 +6,19 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.5.0 - 2026-10-21
+
+### Added
+- **同页多任务浮层堆叠。** content script 原先每页一张固定单例卡：同一标签页里第 2 个被
+  接管任务会覆盖第 1 个的进度，前一个的完成/失败终态也被顶掉。现在浮层消息携带任务 id
+  （track 的初始推送与轮询更新均带），content 侧按任务 id 建卡/更新，多卡纵向堆叠（新卡
+  贴近右下角、向上生长），终态停留（完成 6s / 失败 12s）后从 DOM 移除、堆叠收缩。
+- 单任务时视觉与 1.2.x 一致（样式、三态文案、停留时长均未变）。
+
+### Fixed
+- 终态卡片原先只隐藏不销毁（× 与超时都只是加 class），长会话里 DOM 节点持续累积；现在
+  一律从 DOM 移除。
+
 ## Extension 1.4.0 - 2026-10-21
 
 ### Added
