@@ -30,6 +30,8 @@ DEFAULTS = {
     "server_token": "",           # 首次 serve 自动生成，扩展里填同一个值
     "server_parallel": 2,         # 同时下载的任务数
     "download_dir": "",           # 空=自动（~/Downloads，没有则当前目录）
+    "dedup_add": True,            # /add 去重：同 url+dest+headers+proxy 的活跃任务只保留一个
+    "retain_days": 7,             # serve 启动时自动清理 N 天前的已完成/失败记录（0=不清理）
 }
 
 
@@ -53,7 +55,7 @@ def config_path():
     return os.path.join(home(), "config.json")
 
 
-BOOL_KEYS = ("seam_verify", "open_range", "dynamic_chunks", "keepalive")
+BOOL_KEYS = ("seam_verify", "open_range", "dynamic_chunks", "keepalive", "dedup_add")
 
 
 def _coerce_bool(v):

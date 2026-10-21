@@ -6,6 +6,22 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.4] - 2026-10-21
+
+### Fixed
+- **±1 字节大小误判。** 少数服务器上报的 `Content-Length` 比实际 body 多 1 字节（实测
+  `大小不符: 7132 != 7133`，队列里约 15 条因此失败）。单连接整取路径现在容忍 ±1 字节、
+  采信实际读到的字节数，不再把完好文件判死。
+- **重复入队。** `POST /add` 现在对 `url+dest+headers+proxy` 相同的**活跃**任务（pending/running）
+  去重，命中则返回已有任务 id（`"deduped": true`）。此前同一 URL 会被周期性重复补加
+  （实测间隔约 8–10 秒）撑大队列。由 `config dedup_add` 控制，默认开。
+
+### Added
+- **`ai-idm queue purge`**：批量清理记录，`--status done,error,cancelled`（默认），可选 `--older-than N`。
+- **`config retain_days`（默认 7）**：`ai-idm serve` 启动时自动清理 N 天前的已完成/失败记录，
+  避免队列无限增长；设为 0 关闭。
+- `tests/test_dedup_purge.py`（7 检查）：去重命中/未命中、purge 只删指定状态、±1 字节下载成功。
+
 ## [1.12.3] - 2026-10-21
 
 ### Changed

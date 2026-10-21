@@ -88,6 +88,48 @@ class Queue:
             self._conn.commit()
         return cur.rowcount > 0
 
+    def find_active(self, url, dest=None, proxy=None, headers=None):
+        """查找与入参等价的活跃任务（pending/running），用于 /add 去重。
+
+        判定键 = url + dest + proxy + headers（规范化 JSON）。命中返回该行，否则 None。
+        只比对活跃状态：已完成/失败的不算，允许用户重新下载。
+        """
+        want_h = json.dumps(headers or {}, ensure_ascii=False, sort_keys=True)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE url=? AND status IN ('pending','running')",
+                (url,)).fetchall()
+        for r in rows:
+            if (r["dest"] or None) != (dest or None):
+                continue
+            if (r["proxy"] or None) != (proxy or None):
+                continue
+            try:
+                got_h = json.dumps(json.loads(r["headers"] or "{}"),
+                                   ensure_ascii=False, sort_keys=True)
+            except Exception:                                  # noqa: BLE001
+                got_h = r["headers"] or "{}"
+            if got_h == want_h:
+                return self._row_to_dict(r)
+        return None
+
+    def purge(self, statuses=("done", "error", "cancelled"), older_than_days=None):
+        """删除指定状态的记录，返回删除行数。older_than_days 给定时只删更早的。"""
+        statuses = tuple(statuses)
+        if not statuses:
+            return 0
+        qmarks = ",".join("?" * len(statuses))
+        sql = f"DELETE FROM tasks WHERE status IN ({qmarks})"
+        args = list(statuses)
+        if older_than_days is not None:
+            cutoff = time.time() - float(older_than_days) * 86400
+            sql += " AND COALESCE(finished_at, added_at, 0) < ?"
+            args.append(cutoff)
+        with self._lock:
+            cur = self._conn.execute(sql, args)
+            self._conn.commit()
+        return cur.rowcount
+
     def retry(self, tid):
         with self._lock:
             cur = self._conn.execute(

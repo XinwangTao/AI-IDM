@@ -279,6 +279,18 @@ class TakeoverServer:
                     task = app.start_hls(url, name, headers, p.get("proxy") or None)
                     return self._json(200, {"ok": True, **task})
 
+                if bool(app.cfg.get("dedup_add", True)):
+                    dup = app.q.find_active(url, dest=dest, proxy=r["proxy"],
+                                            headers=headers)
+                    if dup is not None:
+                        from .engine import is_mirror_host
+                        eff = 1 if is_mirror_host(url) else (
+                            dup.get("connections") or r["connections"])
+                        return self._json(200, {
+                            "ok": True, "id": dup["id"], "url": url,
+                            "status": dup.get("status"), "dest": dup.get("dest"),
+                            "connections": eff, "deduped": True,
+                        })
                 try:
                     tid = app.q.add(url, dest=dest, connections=r["connections"],
                                     limit_bps=r["limit_bps"], proxy=r["proxy"],
@@ -315,6 +327,12 @@ class TakeoverServer:
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         kwargs={"poll_interval": 0.2}, daemon=True)
         self._thread.start()
+        try:
+            retain = int(self.cfg.get("retain_days") or 0)
+            if retain > 0:
+                self.q.purge(("done", "error", "cancelled"), older_than_days=retain)
+        except Exception:                                    # noqa: BLE001
+            pass
         if self.run_downloads:
             self.runner = Runner(self.q, parallel=self.parallel, on_event=self.push_event,
                                  dest_dir=self.download_dir)

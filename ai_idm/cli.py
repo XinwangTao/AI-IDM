@@ -370,6 +370,16 @@ def cmd_queue_retry(args):
     return 0 if ok else 1
 
 
+def cmd_queue_purge(args):
+    q = _queue(args)
+    raw = args.status or "done,error,cancelled"
+    statuses = tuple(s.strip() for s in raw.split(",") if s.strip())
+    n = q.purge(statuses, older_than_days=args.older_than)
+    print(json.dumps({"ok": True, "removed": n, "statuses": list(statuses),
+                      "older_than_days": args.older_than}, ensure_ascii=False))
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="ai-idm",
@@ -518,6 +528,13 @@ def build_parser():
     qrt.add_argument("id")
     qrt.add_argument("--db")
     qrt.set_defaults(func=cmd_queue_retry)
+
+    qpg = qsub.add_parser("purge", help="清理记录：默认删除 done/error/cancelled")
+    qpg.add_argument("--status", help="逗号分隔的状态（默认 done,error,cancelled）")
+    qpg.add_argument("--older-than", type=float, default=None,
+                     help="只删 N 天前的记录（省略=不限时间）")
+    qpg.add_argument("--db")
+    qpg.set_defaults(func=cmd_queue_purge)
     return p
 
 

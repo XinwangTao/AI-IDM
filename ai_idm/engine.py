@@ -28,6 +28,10 @@ SEAM = 64                   # 接缝重叠字节数（对应 IDM 日志里的 po
 CHUNK_FACTOR = 4            # 动态分块：块数 ≈ 连接数 × 4（块越小，尾延迟越低）
 MAX_CHUNKS = 256            # 块数上限，避免状态文件与线程调度开销失控
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.12"
+
+# 少数服务器的 Content-Length 与实际 body 相差 1 字节（已见 7132 != 7133）。
+# 最终大小校验允许这个微小误差，否则会把完好的文件误判为 "大小不符" 失败。
+SIZE_TOLERANCE = 1
 DEFAULT_CONNECTIONS = 8
 
 # GitHub「下载加速」镜像站：它们按**请求数**限流（429 + Retry-After），
@@ -1063,4 +1067,7 @@ class Download:
                     self.done = pos
                 self._emit()
         if self.total and pos != self.total:
-            raise DownloadError(f"大小不符: {pos} != {self.total}")
+            if abs(pos - self.total) <= SIZE_TOLERANCE:
+                self.total = pos      # 采信实际字节数（服务器 Content-Length 差 1 的 quirk）
+            else:
+                raise DownloadError(f"大小不符: {pos} != {self.total}")
