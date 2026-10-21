@@ -48,7 +48,8 @@ async function ping() {
   try {
     const d = await api("/ping", { timeout: 1200 });
     $("#dot").className = "dot on";
-    $("#foot").textContent = `服务在线 · v${d.version || "?"}`;
+    const ext = chrome.runtime.getManifest().version;
+    $("#foot").textContent = `服务在线 · 扩展 v${ext} · 服务 v${d.version || "?"}`;
     return true;
   } catch (e) {
     $("#dot").className = "dot off";

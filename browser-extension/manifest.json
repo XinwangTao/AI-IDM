@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI-IDM 下载接管",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "把浏览器下载交给本地 AI-IDM 多连接下载器：自动接管、右键菜单、实时进度。",
   "minimum_chrome_version": "102",
   "permissions": [
@@ -10,7 +10,8 @@
     "contextMenus",
     "notifications",
     "cookies",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -18,6 +19,14 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "AI-IDM 下载接管",

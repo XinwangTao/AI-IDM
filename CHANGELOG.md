@@ -6,6 +6,17 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.2.0 - 2026-10-21
+
+### Added
+- **In-page download HUD.** A content script renders a floating card in the bottom-right corner
+  of the page with live progress, speed and the final result. It does not depend on OS
+  notifications, which Windows Focus Assist or per-browser notification settings can suppress.
+  The background worker injects it on demand (`chrome.scripting`) so tabs opened before the
+  extension was reloaded still get it.
+- The popup footer now shows the **extension version** next to the service version, so it is
+  obvious whether a reload took effect.
+
 ## Extension 1.1.0 - 2026-10-21
 
 ### Added

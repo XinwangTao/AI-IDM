@@ -113,9 +113,45 @@ async function bumpBadge() {
   }
 }
 
-/** 正在跟踪的服务端任务：tid -> {url}。用于完成后弹通知。 */
+/** 正在跟踪的服务端任务：tid -> {url, tabId, name}。用于页面浮层 + 完成通知。 */
 const PENDING = new Map();
+const LAST = new Map();          // tid -> {t, d}，用来算瞬时速度
 let pollTimer = null;
+
+function hud(tabId, payload) {
+  if (!tabId) return;
+  const push = () => chrome.tabs.sendMessage(
+    tabId, { type: "hud", payload }, () => void chrome.runtime.lastError);
+
+  // 扩展重载前就开着的标签页没有 content script：按需注入一次（脚本自身有幂等保护）
+  let injected = false;
+  const ensure = () => {
+    if (injected) return;
+    injected = true;
+    try {
+      chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }, () => {
+        void chrome.runtime.lastError;
+        push();
+      });
+    } catch (_) { /* chrome:// 之类不允许注入 */ }
+  };
+
+  try {
+    chrome.tabs.sendMessage(tabId, { type: "hud", payload }, () => {
+      if (chrome.runtime.lastError) ensure();
+    });
+  } catch (_) { ensure(); }
+}
+
+function speedOf(tid, downloaded) {
+  const now = Date.now();
+  const prev = LAST.get(tid);
+  LAST.set(tid, { t: now, d: downloaded || 0 });
+  if (!prev) return 0;
+  const dt = (now - prev.t) / 1000;
+  if (dt <= 0) return 0;
+  return Math.max(0, ((downloaded || 0) - prev.d) / dt);
+}
 
 async function pollOnce() {
   if (!PENDING.size) {
@@ -125,18 +161,27 @@ async function pollOnce() {
   try {
     const d = await api("/status", { timeout: 4000 });
     const byId = new Map((d.tasks || []).map((t) => [t.id, t]));
-    for (const tid of [...PENDING.keys()]) {
+    for (const [tid, meta] of [...PENDING.entries()]) {
       const t = byId.get(tid);
       if (!t) continue;
-      if (t.status === "done") {
+      if (t.status === "pending" || t.status === "running") {
+        hud(meta.tabId, {
+          phase: "progress",
+          percent: t.percent,
+          total: t.total,
+          speed: speedOf(tid, t.downloaded),
+          name: meta.name || basename(t.dest) || t.url,
+        });
+      } else if (t.status === "done") {
         PENDING.delete(tid);
+        hud(meta.tabId, { phase: "done", dest: t.dest, total: t.total });
         notify("AI-IDM 下载完成", t.dest || t.url);
-        // 系统通知被关掉时，图标上的绿勾也能说明"下完了"
         chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
         chrome.action.setBadgeText({ text: "✓" });
         setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
         PENDING.delete(tid);
+        hud(meta.tabId, { phase: "error", error: t.error || t.status });
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
         chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
         chrome.action.setBadgeText({ text: "!" });
@@ -149,14 +194,21 @@ async function pollOnce() {
   } catch (_) { /* 服务暂时不可达，下一轮再试 */ }
 }
 
-function track(tid, url) {
+async function track(tid, url, tabId, name) {
   if (!tid) return;
-  PENDING.set(tid, { url });
-  if (!pollTimer) pollTimer = setInterval(pollOnce, 2000);
+  if (!tabId) {
+    try {
+      const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      tabId = t && t.id;
+    } catch (_) { /* ignore */ }
+  }
+  PENDING.set(tid, { url, tabId, name });
+  hud(tabId, { phase: "progress", percent: 0, total: 0, speed: 0, name: name || url });
+  if (!pollTimer) pollTimer = setInterval(pollOnce, 1500);
 }
 
 /** 把 URL 交给本地服务；失败抛异常由调用方决定是否回退浏览器。 */
-async function send(url, extra = {}) {
+async function send(url, extra = {}, tabId = null) {
   const c = await cfg();
   // 镜像站链接原样转交：引擎识别到镜像域名会自动降为单连接，避免 429。
   const payload = { ...extra, url };
@@ -166,11 +218,11 @@ async function send(url, extra = {}) {
   }
   const data = await api("/add", { method: "POST", body: payload, timeout: 8000 });
   await bumpBadge();
-  track(data.id, url);
+  const name = basename(payload.filename) || data.dest || url;
+  await track(data.id, url, tabId, name);
   if (c.notify) {
-    const name = basename(payload.filename) || data.dest || url;
     const conns = data.connections ? `${data.connections} 连接` : "多连接";
-    notify("已交给 AI-IDM 下载", `${name}\n${conns}，完成后会再提示`);
+    notify("已交给 AI-IDM 下载", `${conns}，完成后会再提示`);
   }
   return data;
 }
@@ -218,7 +270,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = info.linkUrl || info.srcUrl || info.pageUrl;
   if (!url) return;
   try {
-    await send(url, { referer: tab && tab.url, source: "menu" });
+    await send(url, { referer: tab && tab.url, source: "menu" }, tab && tab.id);
   } catch (e) {
     notify("加入 AI-IDM 失败", String(e.message || e));
   }
