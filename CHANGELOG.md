@@ -6,6 +6,13 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.3] - 2026-10-21
+
+### Changed
+- **MCP downloads honour `download_dir`.** `start_download` and `queue_run` now pass the
+  configured `download_dir` to the engine, so downloads started by an AI agent land in the same
+  folder as browser takeovers instead of the server process's working directory.
+
 ## Extension 1.2.0 - 2026-10-21
 
 ### Added

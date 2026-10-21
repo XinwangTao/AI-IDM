@@ -53,6 +53,8 @@ def t_start_download(args):
         open_range=bool(args.get("open_range", cfg.get("open_range", False))),
         dynamic_chunks=bool(args.get("dynamic_chunks", cfg.get("dynamic_chunks", True))),
         keepalive=bool(args.get("keepalive", cfg.get("keepalive", True))),
+        # 与浏览器接管共用同一个下载目录：AI 发起的下载也落到用户预期位置
+        dest_dir=cfg.get("download_dir") or None,
         progress=None,
     )
     with _reg_lock:
@@ -137,9 +139,11 @@ def t_queue_list(args):
 
 
 def t_queue_run(args):
+    from . import config as cfgmod
     from .queue import Queue, Runner
     q = Queue(args.get("db"))
-    runner = Runner(q, parallel=int(args.get("parallel") or 2))
+    runner = Runner(q, parallel=int(args.get("parallel") or 2),
+                    dest_dir=cfgmod.load().get("download_dir") or None)
     stats = runner.run(idle_exit=True)
     return _json({"ok": True, "stats": stats, "tasks": q.list()})
 
