@@ -26,26 +26,6 @@ const SKIP_PATTERNS = [
   /^https?:\/\/update\.googleapis\.com\//i,
 ];
 
-// 常见的「GitHub 下载加速」镜像：把 github.com/... 改写成 <mirror>/gh/...。
-// 这些镜像常因限流（429）把下载卡死，转交前先把 URL 还原成原始 github.com，
-// 由 AI-IDM 直接拉取，更稳、还能多连接加速。
-const GH_MIRRORS = [
-  "xget.xi-xu.me",
-  "ghproxy.com", "ghproxy.net", "mirror.ghproxy.com",
-  "gh.api.99988866.xyz", "github.moeyy.xyz", "ghproxy.net",
-  "gh-proxy.com", "github.bibhu.io", "ghproxy.1888866.xyz",
-];
-
-function normalizeUrl(u) {
-  try {
-    const p = new URL(u);
-    if (GH_MIRRORS.includes(p.hostname) && p.pathname.startsWith("/gh/")) {
-      return "https://github.com" + p.pathname.slice(3) + (p.search || "");
-    }
-  } catch (_) { /* 不是合法 URL 就原样返回 */ }
-  return u;
-}
-
 // ---------------------------------------------------------------- 配置 / 请求
 
 async function cfg() {
@@ -136,7 +116,7 @@ async function bumpBadge() {
 /** 把 URL 交给本地服务；失败抛异常由调用方决定是否回退浏览器。 */
 async function send(url, extra = {}) {
   const c = await cfg();
-  url = normalizeUrl(url);   // 还原 GitHub 镜像站，避免 429 卡死
+  // 镜像站链接原样转交：引擎识别到镜像域名会自动降为单连接，避免 429。
   const payload = { ...extra, url };
   if (c.forwardCookies && !payload.cookie) {
     const ck = await cookieHeader(url, c);

@@ -131,7 +131,7 @@ curl -s -X POST http://127.0.0.1:13391/add \
 | 接管后浏览器仍在下载 | 该 URL 不是 http(s)/ftp（blob、data），或服务离线 |
 | 端口被占用 | `ai-idm serve --port 13392`，扩展设置同步改 |
 | 想看服务日志 | 面板 `/` 看任务；事件流见 `/events` |
-| 点了 GitHub release 链接「没反应」 | 多半是装了「GitHub 下载加速」插件，把链接改写成 `xget.xi-xu.me/gh/...` 之类的镜像，镜像返回 429 限流。扩展 v1.12.1 起会**自动还原成原始 `github.com` 链接**再接管；旧版请升级或先在扩展设置里关掉加速插件 |
+| 点了 GitHub release 链接「没反应」 | 多半是装了「GitHub 下载加速」插件，把链接改写成 `xget.xi-xu.me/gh/...` 之类的镜像。镜像按**请求数**限流（429 + `Retry-After`），v1.12.2 起引擎识别到镜像域名会走**单请求整取**（不 HEAD、不发 Range），实测与 curl 同速；升级后记得重载扩展并重启 `ai-idm serve` |
 
 ## 一条命令验证链路
 

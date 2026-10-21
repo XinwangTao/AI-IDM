@@ -30,6 +30,36 @@ MAX_CHUNKS = 256            # 块数上限，避免状态文件与线程调度�
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.12"
 DEFAULT_CONNECTIONS = 8
 
+# GitHub「下载加速」镜像站：它们按**请求数**限流（429 + Retry-After），
+# 并发多连接必然触发限流，所以对这些域名强制单连接串行取流。
+GITHUB_MIRROR_HOSTS = frozenset({
+    "xget.xi-xu.me",
+    "ghproxy.com", "ghproxy.net", "mirror.ghproxy.com",
+    "gh.api.99988866.xyz", "github.moeyy.xyz", "gh-proxy.com",
+    "ghproxy.1888866.xyz", "github.bibhu.io",
+})
+
+
+def is_mirror_host(url):
+    """URL 是否落在已知的 GitHub 加速镜像上（这类站点扛不住并发）。"""
+    try:
+        from urllib.parse import urlsplit
+        host = (urlsplit(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host in GITHUB_MIRROR_HOSTS
+
+
+def _retry_after(err, fallback):
+    """从 HTTPError 里取 Retry-After（秒）；没有就用退避值。"""
+    try:
+        v = err.headers.get("Retry-After")
+        if v:
+            return max(0.0, min(float(v), 60.0))
+    except Exception:
+        pass
+    return fallback
+
 
 class DownloadError(RuntimeError):
     pass
@@ -141,7 +171,7 @@ def _open_with_retry(opener, req, timeout, max_retries=4):
         except urllib.error.HTTPError as e:
             last = e
             if e.code in RETRY_CODES and i < max_retries:
-                time.sleep(min(2 ** i * 0.5, 8))
+                time.sleep(_retry_after(e, min(2 ** i * 0.5, 8)))
                 continue
             raise
     raise last
@@ -354,6 +384,12 @@ class Download:
         self.dynamic_chunks = True if dynamic_chunks is None else bool(dynamic_chunks)
         # 连接复用：同一 worker 连续取块时复用同一条 TCP（IDM 的 Reusing connection.）
         self.keepalive = True if keepalive is None else bool(keepalive)
+        # 镜像站按请求数限流：多连接 = 多请求 = 必被 429。强制单连接串行整取。
+        self.mirror = is_mirror_host(url)
+        if self.mirror:
+            self.connections = 1
+            self.dynamic_chunks = False
+            self.keepalive = False
         self._pool = None
         self._fetch_url = None
         self.mismatch_detected = False
@@ -596,7 +632,8 @@ class Download:
                 attempt += 1
                 if attempt > self.max_retries:
                     raise DownloadError(f"HTTP {e.code}") from e
-                time.sleep(min(2 ** attempt * 0.5, 8))
+                # 429 等限流会带 Retry-After，必须照着等，否则越重试越被限
+                time.sleep(_retry_after(e, min(2 ** attempt * 0.5, 8)))
             except Exception as e:
                 attempt += 1
                 if attempt > self.max_retries:
@@ -787,6 +824,9 @@ class Download:
         if self.schedule:
             threading.Thread(target=self._schedule_loop, daemon=True).start()
         try:
+            if self.mirror:
+                # 镜像按请求数限流：不先 HEAD，直接用一次 GET 完成探测+拉流
+                return self._run_single_request()
             self.probe_info = probe(self.url, self.headers, self.proxy,
                                     self.insecure, self.timeout)
             self.total = self.probe_info.total or 0
@@ -916,6 +956,86 @@ class Download:
         if self.total:
             self._fh.truncate(0)
         self._single_stream()
+
+    def _run_single_request(self):
+        """镜像站专用：**一次 GET 同时完成探测与下载**。
+
+        镜像（xget / ghproxy 之类）按请求数限流，10 秒窗口内基本只容一个请求。
+        常规流程"HEAD 探测 + GET 拉流"里的第二个请求必被 429，白等一个 Retry-After。
+        这里直接发 GET，从响应头拿长度/文件名，然后把同一个响应体写完。
+        """
+        opener = _make_opener(self.proxy, self.insecure)
+        h = {"User-Agent": DEFAULT_UA}
+        h.update(self.headers)
+        req = urllib.request.Request(self.url, headers=h, method="GET")
+        resp = _open_with_retry(opener, req, self.timeout)
+        try:
+            final_url = resp.geturl()
+            total = int(resp.headers.get("Content-Length") or 0) or 0
+            self.total = total
+            # 保持快照字段一致：镜像整取在快照里也是一个"整段"
+            self.segments = [Segment(0, 0, max(0, total - 1))]
+            self.probe_info = Probe(
+                self.url, final_url, total, False,
+                resp.headers.get("ETag"), resp.headers.get("Last-Modified"),
+                _filename_from_headers(resp.headers, final_url),
+                resp.headers.get("Content-Type"), resp.status)
+            self._fetch_url = final_url
+
+            if not self.dest:
+                self.dest = self.probe_info.filename
+            if (self.dest_dir and not os.path.isabs(self.dest)
+                    and not os.path.dirname(self.dest)):
+                self.dest = os.path.join(self.dest_dir, self.dest)
+            self.dest = os.path.abspath(self.dest)
+            parent = os.path.dirname(self.dest)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+
+            self._temp_path = self.dest + ".idmpart"
+            pos = 0
+            mon = threading.Thread(target=self._monitor, daemon=True)
+            mon.start()
+            with open(self._temp_path, "wb") as fh:
+                self._fh = fh
+                while not self._stop.is_set():
+                    chunk = resp.read(CHUNK)
+                    if not chunk:
+                        break
+                    self._limiter.consume(len(chunk))
+                    fh.write(chunk)
+                    pos += len(chunk)
+                    with self._lock:
+                        self.done = pos
+                    self._emit()
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._fh = None
+            mon.join(timeout=1)
+
+            if total and pos < total:
+                raise DownloadError(f"未完成: {pos}/{total} 字节")
+            os.replace(self._temp_path, self.dest)
+            self._temp_path = None
+            self.status = "done"
+            self.finished_at = time.time()
+            self.speed = 0.0
+            self.done = pos
+            self._emit()
+            result = self.snapshot()
+            result["elapsed_sec"] = round(self.finished_at - self.started_at, 2)
+            if self.verify:
+                hh = hashlib.new(self.verify)
+                with open(self.dest, "rb") as f:
+                    for blk in iter(lambda: f.read(1 << 20), b""):
+                        hh.update(blk)
+                result["checksum"] = {self.verify: hh.hexdigest()}
+            return result
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def _single_stream(self):
         """服务端不支持 Range：单连接整取。"""

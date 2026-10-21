@@ -286,10 +286,13 @@ class TakeoverServer:
                 except Exception as e:                       # noqa: BLE001
                     return self._json(500, {"ok": False, "error": f"入队失败: {e}"})
                 app.push_event({"event": "added", "id": tid, "url": url})
+                # 镜像站会被引擎强制降为单连接，这里如实回报，避免"显示8连接其实1条"
+                from .engine import is_mirror_host
+                eff_conns = 1 if is_mirror_host(url) else r["connections"]
                 return self._json(200, {
                     "ok": True, "id": tid, "url": url, "status": "pending",
                     "dest": dest,
-                    "connections": r["connections"],
+                    "connections": eff_conns,
                 })
 
             def _handle_cancel(self, tid):

@@ -6,6 +6,24 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.2] - 2026-10-21
+
+### Fixed
+- **Mirror hosts download in a single request.** GitHub accelerators (`xget.xi-xu.me`,
+  `ghproxy.com`, …) rate-limit by request count: the usual "HEAD probe + GET body" pattern
+  makes the second request 429 and pay a full `Retry-After` (10 s). Those hosts now take a
+  dedicated path that opens one `GET`, derives size/name from the response headers and streams
+  that same response to disk — no HEAD, no `Range`, no 429. Measured on a 17 MB asset:
+  29 s → 5.4 s (on par with curl).
+- `Retry-After` is honoured on `429/5xx` in both `probe()` and segment retries.
+- `POST /add` reports the effective connection count (1 for mirror hosts).
+- Reverts the 1.12.1 URL rewriting: mirror URLs are passed through untouched, since the user's
+  accelerator is what makes those hosts reachable in the first place.
+
+### Added
+- `tests/test_mirror.py` (5 checks) — asserts exactly one GET, no HEAD, no `Range`.
+  Suite count is now 14 / 60 checks.
+
 ## [1.12.1] - 2026-10-21
 
 ### Fixed
