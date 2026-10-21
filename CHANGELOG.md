@@ -6,6 +6,13 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.2.1 - 2026-10-21
+
+### Fixed
+- **浮层不再把"排队中"显示成 0%。** 任务处于 `pending`（等并发槽）时，浮层原先显示
+  "AI-IDM 下载中 0.0%"，看起来像卡死——实际可能只是排在别的任务后面。现在区分三种状态：
+  排队中（"排队中 · 等待空闲连接"）、连接中（已开跑但还没探到大小）、下载中（百分比 + 速度）。
+
 ## [1.12.5] - 2026-10-21
 
 ### Fixed

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI-IDM 下载接管",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "把浏览器下载交给本地 AI-IDM 多连接下载器：自动接管、右键菜单、实时进度。",
   "minimum_chrome_version": "102",
   "permissions": [

@@ -79,13 +79,31 @@
     clearTimeout(hideTimer);
 
     const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
-    root.querySelector(".title").textContent = "AI-IDM 下载中";
+    const title = root.querySelector(".title");
+    const left = root.querySelector(".left");
+    const right = root.querySelector(".right");
+    const fill = root.querySelector(".fill");
+
+    // 三种状态分开显示，避免"排队中"被误读成"卡在 0%"
+    if (p.queued) {
+      title.textContent = "AI-IDM 排队中…";
+      left.textContent = "排队中";
+      right.textContent = "等待空闲连接";
+      fill.style.width = "0%";
+    } else if (p.connecting) {
+      title.textContent = "AI-IDM 连接中…";
+      left.textContent = "连接中";
+      right.textContent = "";
+      fill.style.width = "0%";
+    } else {
+      title.textContent = "AI-IDM 下载中";
+      fill.style.width = pct + "%";
+      left.textContent = pct.toFixed(1) + "%";
+      right.textContent =
+        [p.speed ? fmt(p.speed) + "/s" : "", p.total ? fmt(p.total) : ""]
+          .filter(Boolean).join(" · ");
+    }
     root.querySelector(".name").textContent = p.name || p.url || "";
-    root.querySelector(".fill").style.width = pct + "%";
-    root.querySelector(".left").textContent = pct.toFixed(1) + "%";
-    root.querySelector(".right").textContent =
-      [p.speed ? fmt(p.speed) + "/s" : "", p.total ? fmt(p.total) : ""]
-        .filter(Boolean).join(" · ");
   }
 
   function finish(p, ok) {

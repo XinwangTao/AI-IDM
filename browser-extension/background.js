@@ -167,6 +167,8 @@ async function pollOnce() {
       if (t.status === "pending" || t.status === "running") {
         hud(meta.tabId, {
           phase: "progress",
+          queued: t.status === "pending",              // 排队中（还没轮到）
+          connecting: t.status === "running" && !t.total, // 已开跑但还没探到大小
           percent: t.percent,
           total: t.total,
           speed: speedOf(tid, t.downloaded),
@@ -203,7 +205,7 @@ async function track(tid, url, tabId, name) {
     } catch (_) { /* ignore */ }
   }
   PENDING.set(tid, { url, tabId, name });
-  hud(tabId, { phase: "progress", percent: 0, total: 0, speed: 0, name: name || url });
+  hud(tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
   if (!pollTimer) pollTimer = setInterval(pollOnce, 1500);
 }
 
