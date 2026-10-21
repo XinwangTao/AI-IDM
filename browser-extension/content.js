@@ -6,6 +6,7 @@
  *
  * 1.5.0 起按任务 id 建卡：同一标签页里多个被接管任务各自一张卡，纵向
  * 堆叠（新卡贴近右下角、向上生长），终态停留几秒后从 DOM 移除。
+ * 1.7.0 起 × 关闭 = 把任务加入 dismissed 屏蔽集，后续推送不再重建卡片。
  */
 
 (() => {
@@ -17,6 +18,7 @@
   let stack = null;
 
   const cards = new Map();     // tid -> { card, hideTimer }
+  const dismissed = new Set(); // 用户点过 × 的任务：本页面会话内不再显示，后续消息一律忽略
 
   const CSS = `
     :host { all: initial; }
@@ -86,13 +88,14 @@
       <div class="bar"><div class="fill"></div></div>
       <div class="meta"><span class="left">0%</span><span class="right"></span></div>`;
     stack.appendChild(card);          // 追加到末尾 = 视觉上最贴近右下角，向上生长
-    card.querySelector(".close").addEventListener("click", () => removeCard(tid));
+    card.querySelector(".close").addEventListener("click", () => dismiss(tid));
     c = { card, hideTimer: null };
     cards.set(tid, c);
     return c;
   }
 
   function show(tid, p) {
+    if (dismissed.has(tid)) return;   // f3：已屏蔽，进度推送不重建卡
     const c = cardFor(tid);
     c.card.classList.remove("hide", "done", "err");
     clearTimeout(c.hideTimer);
@@ -126,6 +129,7 @@
   }
 
   function finish(tid, p, ok) {
+    if (dismissed.has(tid)) return;   // f3：已屏蔽，终态也不重建卡
     const c = cardFor(tid);
     c.card.classList.remove("hide");
     c.card.classList.toggle("done", ok);
@@ -146,6 +150,12 @@
     clearTimeout(c.hideTimer);
     c.card.remove();
     cards.delete(tid);
+  }
+
+  /** n9：用户点 × —— 屏蔽该任务并立即移除卡片；该任务后续消息走 f3 被忽略。 */
+  function dismiss(tid) {
+    dismissed.add(tid);
+    removeCard(tid);
   }
 
   chrome.runtime.onMessage.addListener((msg) => {

@@ -6,6 +6,14 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.7.0 - 2026-10-21
+
+### Fixed
+- **浮层 × 关闭真正关得掉了。** 1.5.0 起 × 只是从 DOM 移除卡片，下载进行中时 1.5s 内的
+  下一条进度推送会把它原样重建出来。现在 × 把任务加入页面会话内的 dismissed 屏蔽集，
+  该任务后续所有浮层消息一律忽略；下载本身不受影响（完成/失败仍走系统通知与徽标）。
+  页面刷新/跳转后屏蔽自然清空（卡片本来也随文档销毁）。
+
 ## Extension 1.6.0 - 2026-10-21
 
 ### Added
