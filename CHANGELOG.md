@@ -6,6 +6,12 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.6.0 - 2026-10-21
+
+### Added
+- **弹窗任务行点击复制。** 点任务行即复制落盘路径（尚未落盘的任务复制 URL），底部状态栏
+  提示「已复制」。此前想拿文件完整路径只能去下载目录里翻。
+
 ## Extension 1.5.0 - 2026-10-21
 
 ### Added

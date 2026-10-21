@@ -77,7 +77,7 @@ function render(tasks) {
     const active = st === "pending" || st === "running";
     const act = `<button class="act" data-act="${active ? "cancel" : "remove"}"
       data-id="${esc(t.id)}">${active ? "取消" : "移除"}</button>`;
-    return `<div class="row ${st}" title="${esc(t.error || t.url || "")}">
+    return `<div class="row ${st}" data-copy="${esc(t.dest || t.url || "")}" title="${esc(t.error || t.url || "")}">
       <span class="nm">${esc(name)}</span>
       <span class="bar"><i style="width:${pct}%"></i></span>
       <span class="pct">${pct.toFixed(0)}%</span>
@@ -132,18 +132,30 @@ $("#opts").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
-// 列表按钮用事件委托：refresh() 每 1.5s 重写 innerHTML，监听器必须挂在容器上
+// 列表用事件委托：refresh() 每 1.5s 重写 innerHTML，监听器必须挂在容器上
 $("#rows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button.act");
-  if (!btn || btn.disabled) return;
-  const verb = btn.dataset.act === "cancel" ? "取消" : "移除";
-  btn.disabled = true;
-  try {
-    await api(`/${btn.dataset.act}/${encodeURIComponent(btn.dataset.id)}`, { method: "POST" });
-  } catch (err) {
-    $("#foot").textContent = `${verb}失败：${err.message || err}`;
+  if (btn) {
+    if (btn.disabled) return;
+    const verb = btn.dataset.act === "cancel" ? "取消" : "移除";
+    btn.disabled = true;
+    try {
+      await api(`/${btn.dataset.act}/${encodeURIComponent(btn.dataset.id)}`, { method: "POST" });
+    } catch (err) {
+      $("#foot").textContent = `${verb}失败：${err.message || err}`;
+    }
+    refresh();
+    return;
   }
-  refresh();
+  // 点行复制：优先落盘路径，未落盘复制 URL
+  const row = e.target.closest(".row[data-copy]");
+  if (!row || !row.dataset.copy) return;
+  try {
+    await navigator.clipboard.writeText(row.dataset.copy);
+    $("#foot").textContent = "已复制路径";
+  } catch (_) {
+    $("#foot").textContent = "复制失败（弹窗失焦时剪贴板可能不可用）";
+  }
 });
 
 (async () => {
