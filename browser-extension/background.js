@@ -113,6 +113,40 @@ async function bumpBadge() {
   }
 }
 
+/** 正在跟踪的服务端任务：tid -> {url}。用于完成后弹通知。 */
+const PENDING = new Map();
+let pollTimer = null;
+
+async function pollOnce() {
+  if (!PENDING.size) {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    return;
+  }
+  try {
+    const d = await api("/status", { timeout: 4000 });
+    const byId = new Map((d.tasks || []).map((t) => [t.id, t]));
+    for (const tid of [...PENDING.keys()]) {
+      const t = byId.get(tid);
+      if (!t) continue;
+      if (t.status === "done") {
+        PENDING.delete(tid);
+        notify("AI-IDM 下载完成", t.dest || t.url);
+      } else if (t.status === "error" || t.status === "cancelled") {
+        PENDING.delete(tid);
+        notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
+      }
+    }
+    await bumpBadge();
+    if (!PENDING.size && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  } catch (_) { /* 服务暂时不可达，下一轮再试 */ }
+}
+
+function track(tid, url) {
+  if (!tid) return;
+  PENDING.set(tid, { url });
+  if (!pollTimer) pollTimer = setInterval(pollOnce, 2000);
+}
+
 /** 把 URL 交给本地服务；失败抛异常由调用方决定是否回退浏览器。 */
 async function send(url, extra = {}) {
   const c = await cfg();
@@ -124,8 +158,11 @@ async function send(url, extra = {}) {
   }
   const data = await api("/add", { method: "POST", body: payload, timeout: 8000 });
   await bumpBadge();
+  track(data.id, url);
   if (c.notify) {
-    notify("已交给 AI-IDM", basename(payload.filename) || data.dest || url);
+    const name = basename(payload.filename) || data.dest || url;
+    const conns = data.connections ? `${data.connections} 连接` : "多连接";
+    notify("已交给 AI-IDM 下载", `${name}\n${conns}，完成后会再提示`);
   }
   return data;
 }
@@ -158,7 +195,10 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "idm-tick") bumpBadge();
+  if (a.name === "idm-tick") {
+    bumpBadge();
+    pollOnce();          // 兜底：worker 被休眠时靠它续上完成通知
+  }
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

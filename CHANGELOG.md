@@ -6,6 +6,16 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.1.0 - 2026-10-21
+
+### Added
+- **Completion / failure notifications.** The extension now tracks the task id returned by
+  `POST /add` and polls `/status` (2 s interval, `idm-tick` alarm as a fallback) until the job
+  finishes, then raises "AI-IDM 下载完成" with the saved path — or "AI-IDM 下载失败" with the
+  error. Previously a successful takeover was invisible: the browser download showed as
+  "已取消" and the file simply appeared in `Downloads`, which looked like a failure.
+- The hand-off notification now states the connection count.
+
 ## [1.12.2] - 2026-10-21
 
 ### Fixed
