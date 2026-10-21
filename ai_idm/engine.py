@@ -1018,7 +1018,10 @@ class Download:
             mon.join(timeout=1)
 
             if total and pos < total:
-                raise DownloadError(f"未完成: {pos}/{total} 字节")
+                if total - pos <= SIZE_TOLERANCE:
+                    self.total = pos      # 采信实际字节数（服务器 Content-Length 差 1 的 quirk）
+                else:
+                    raise DownloadError(f"未完成: {pos}/{total} 字节")
             os.replace(self._temp_path, self.dest)
             self._temp_path = None
             self.status = "done"

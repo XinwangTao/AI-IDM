@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     finished_at  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_pick ON tasks(status, priority DESC, added_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_url ON tasks(url);
 """
 
 
@@ -88,17 +89,12 @@ class Queue:
             self._conn.commit()
         return cur.rowcount > 0
 
-    def find_active(self, url, dest=None, proxy=None, headers=None):
-        """查找与入参等价的活跃任务（pending/running），用于 /add 去重。
-
-        判定键 = url + dest + proxy + headers（规范化 JSON）。命中返回该行，否则 None。
-        只比对活跃状态：已完成/失败的不算，允许用户重新下载。
-        """
+    def _match_active(self, url, dest, proxy, headers):
+        """在已持有 self._lock 的前提下，查找与入参等价的活跃任务行。"""
         want_h = json.dumps(headers or {}, ensure_ascii=False, sort_keys=True)
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE url=? AND status IN ('pending','running')",
-                (url,)).fetchall()
+        rows = self._conn.execute(
+            "SELECT * FROM tasks WHERE url=? AND status IN ('pending','running')",
+            (url,)).fetchall()
         for r in rows:
             if (r["dest"] or None) != (dest or None):
                 continue
@@ -110,8 +106,36 @@ class Queue:
             except Exception:                                  # noqa: BLE001
                 got_h = r["headers"] or "{}"
             if got_h == want_h:
-                return self._row_to_dict(r)
+                return r
         return None
+
+    def find_active(self, url, dest=None, proxy=None, headers=None):
+        """查找与入参等价的活跃任务（pending/running），命中返回 dict，否则 None。"""
+        with self._lock:
+            r = self._match_active(url, dest, proxy, headers)
+            return self._row_to_dict(r) if r is not None else None
+
+    def find_or_add(self, url, dest=None, connections=8, limit_bps=None, proxy=None,
+                    headers=None, priority=0):
+        """原子化的"查重 + 入队"：返回 (任务行, 是否命中已有)。
+
+        「查」和「插」在同一把锁内完成，避免并发 /add 的 TOCTOU 竞态
+        （否则两个请求都查不到、都插入，还是会产生重复）。
+        """
+        with self._lock:
+            r = self._match_active(url, dest, proxy, headers)
+            if r is not None:
+                return self._row_to_dict(r), True
+            tid = uuid.uuid4().hex[:12]
+            self._conn.execute(
+                "INSERT INTO tasks (id,url,dest,connections,limit_bps,proxy,headers,"
+                "status,priority,attempts,added_at) VALUES (?,?,?,?,?,?,?,?,?,0,?)",
+                (tid, url, dest, int(connections or 8), limit_bps,
+                 proxy, json.dumps(headers or {}, ensure_ascii=False),
+                 "pending", int(priority or 0), time.time()))
+            self._conn.commit()
+        return ({"id": tid, "status": "pending", "dest": dest,
+                 "connections": int(connections or 8)}, False)
 
     def purge(self, statuses=("done", "error", "cancelled"), older_than_days=None):
         """删除指定状态的记录，返回删除行数。older_than_days 给定时只删更早的。"""

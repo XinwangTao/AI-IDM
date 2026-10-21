@@ -279,33 +279,34 @@ class TakeoverServer:
                     task = app.start_hls(url, name, headers, p.get("proxy") or None)
                     return self._json(200, {"ok": True, **task})
 
-                if bool(app.cfg.get("dedup_add", True)):
-                    dup = app.q.find_active(url, dest=dest, proxy=r["proxy"],
-                                            headers=headers)
-                    if dup is not None:
-                        from .engine import is_mirror_host
-                        eff = 1 if is_mirror_host(url) else (
-                            dup.get("connections") or r["connections"])
-                        return self._json(200, {
-                            "ok": True, "id": dup["id"], "url": url,
-                            "status": dup.get("status"), "dest": dup.get("dest"),
-                            "connections": eff, "deduped": True,
-                        })
+                prio = int(p.get("priority") or 0)
                 try:
-                    tid = app.q.add(url, dest=dest, connections=r["connections"],
-                                    limit_bps=r["limit_bps"], proxy=r["proxy"],
-                                    headers=headers, priority=int(p.get("priority") or 0))
+                    if bool(app.cfg.get("dedup_add", True)):
+                        row, deduped = app.q.find_or_add(
+                            url, dest=dest, connections=r["connections"],
+                            limit_bps=r["limit_bps"], proxy=r["proxy"],
+                            headers=headers, priority=prio)
+                    else:
+                        tid = app.q.add(url, dest=dest, connections=r["connections"],
+                                        limit_bps=r["limit_bps"], proxy=r["proxy"],
+                                        headers=headers, priority=prio)
+                        row, deduped = {"id": tid, "status": "pending",
+                                        "dest": dest,
+                                        "connections": r["connections"]}, False
                 except Exception as e:                       # noqa: BLE001
                     return self._json(500, {"ok": False, "error": f"入队失败: {e}"})
-                app.push_event({"event": "added", "id": tid, "url": url})
+                if not deduped:                              # 命中重复就别再刷事件
+                    app.push_event({"event": "added", "id": row["id"], "url": url})
                 # 镜像站会被引擎强制降为单连接，这里如实回报，避免"显示8连接其实1条"
                 from .engine import is_mirror_host
-                eff_conns = 1 if is_mirror_host(url) else r["connections"]
-                return self._json(200, {
-                    "ok": True, "id": tid, "url": url, "status": "pending",
-                    "dest": dest,
-                    "connections": eff_conns,
-                })
+                eff_conns = 1 if is_mirror_host(url) else (
+                    row.get("connections") or r["connections"])
+                resp = {"ok": True, "id": row["id"], "url": url,
+                        "status": row.get("status") or "pending",
+                        "dest": row.get("dest"), "connections": eff_conns}
+                if deduped:
+                    resp["deduped"] = True
+                return self._json(200, resp)
 
             def _handle_cancel(self, tid):
                 if app.runner and app.runner.cancel(tid):

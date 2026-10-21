@@ -6,6 +6,22 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.12.5] - 2026-10-21
+
+### Fixed
+- **镜像整取路径的 ±1 字节容错补齐。** 1.12.4 只修了单连接整取；镜像单请求路径
+  （`_run_single_request`）仍是 `pos < total` 硬判，服务器少发 1 字节照样失败。现同样容忍 ±1。
+- **`/add` 去重的并发竞态。** 由"先查再插"改为原子 `Queue.find_or_add()`（同一把锁内完成
+  查重 + 插入），避免两个并发 `/add` 各建一条重复任务。
+- **去重命中不再重复推送 `added` 事件**，`/events` 不会再被同一 URL 的周期补加刷屏。
+
+### Changed
+- `tasks(url)` 增加索引 `idx_tasks_url`，`/add` 查重从全表扫变为索引查找。
+
+### Tests
+- `tests/test_dedup_purge.py` 扩展为 10 检查：原子 `find_or_add`、`purge`、单连接与镜像两条
+  路径的 ±1 字节容错。
+
 ## [1.12.4] - 2026-10-21
 
 ### Fixed
