@@ -118,6 +118,47 @@ const PENDING = new Map();
 const LAST = new Map();          // tid -> {t, d}，用来算瞬时速度
 let pollTimer = null;
 
+// ---------------------------------------------------------------- 跟踪状态持久化（跨 SW 重启）
+//
+// MV3 service worker 会被休眠或杀掉重启，内存里的 PENDING 随之清空；idm-tick 闹钟
+// 唤醒后 pollOnce() 见 PENDING 为空就直接返回，长下载的完成/失败通知因此丢失。
+// 对策：PENDING 每次变更都写进 chrome.storage.session（浏览器会话内存活），SW 重启后
+// 恢复并续上轮询。storage 不可用时降级为原来的内存跟踪（重启即丢，与旧行为一致）。
+
+const SESSION_KEY = "pending_tasks";
+let restorePromise = null;
+
+async function persistPending() {
+  try {
+    await chrome.storage.session.set({ [SESSION_KEY]: [...PENDING.entries()] });
+  } catch (_) { /* 降级为内存跟踪 */ }
+}
+
+/** 每个 SW 实例只恢复一次；有未完成任务且无定时器时续上轮询（不重发初始「排队中」HUD）。 */
+function ensureRestored() {
+  if (!restorePromise) {
+    restorePromise = (async () => {
+      try {
+        const got = await chrome.storage.session.get(SESSION_KEY);
+        const entries = got[SESSION_KEY];
+        if (Array.isArray(entries)) {
+          for (const [tid, meta] of entries) PENDING.set(tid, meta);
+          await persistPending();     // 合并后全量写回，收敛 storage
+        }
+      } catch (_) { /* 读不到就当没有 */ }
+      if (PENDING.size && !pollTimer) pollTimer = setInterval(pollOnce, 1500);
+    })();
+  }
+  return restorePromise;
+}
+
+/** 收尾：移出跟踪表、清速度采样，并写回快照。 */
+function forget(tid) {
+  PENDING.delete(tid);
+  LAST.delete(tid);
+  persistPending();
+}
+
 function hud(tabId, payload) {
   if (!tabId) return;
   const push = () => chrome.tabs.sendMessage(
@@ -154,6 +195,7 @@ function speedOf(tid, downloaded) {
 }
 
 async function pollOnce() {
+  await ensureRestored();   // SW 重启后的第一次轮询：先把上一个实例留下的任务并回来
   if (!PENDING.size) {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     return;
@@ -175,14 +217,14 @@ async function pollOnce() {
           name: meta.name || basename(t.dest) || t.url,
         });
       } else if (t.status === "done") {
-        PENDING.delete(tid);
+        forget(tid);
         hud(meta.tabId, { phase: "done", dest: t.dest, total: t.total });
         notify("AI-IDM 下载完成", t.dest || t.url);
         chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
         chrome.action.setBadgeText({ text: "✓" });
         setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
-        PENDING.delete(tid);
+        forget(tid);
         hud(meta.tabId, { phase: "error", error: t.error || t.status });
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
         chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
@@ -198,6 +240,7 @@ async function pollOnce() {
 
 async function track(tid, url, tabId, name) {
   if (!tid) return;
+  await ensureRestored();    // 先并回上个 SW 实例留下的任务，快照才完整
   if (!tabId) {
     try {
       const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -205,6 +248,7 @@ async function track(tid, url, tabId, name) {
     } catch (_) { /* ignore */ }
   }
   PENDING.set(tid, { url, tabId, name });
+  persistPending();
   hud(tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
   if (!pollTimer) pollTimer = setInterval(pollOnce, 1500);
 }

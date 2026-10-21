@@ -1,0 +1,52 @@
+{
+  "name": "extension_tracking_workflow",
+  "title": "扩展下载跟踪（跨 SW 重启持久化）",
+  "kind": "workflow",
+  "status": "待确认（L1-C）",
+  "created": "2026-10-21",
+  "batch": {
+    "in_scope": [
+      "background.js：PENDING 跟踪状态写入 chrome.storage.session",
+      "background.js：SW 唤醒/重启后恢复 PENDING 并续启轮询",
+      "background.js：恢复路径不重复推送初始『排队中』HUD",
+      "background.js：storage 写入失败时降级为内存跟踪（保持现状行为）"
+    ],
+    "out_of_scope": [
+      "content.js 浮层多任务堆叠",
+      "弹窗任务管理（取消/移除按钮）",
+      "服务端 /events 或 SSE 推送",
+      "engine.py / server.py 任何改动"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "任务已转交", "note": "send() 成功：POST /add 返回 tid（服务端去重命中时返回既有 tid）" },
+    { "id": "n2", "kind": "step", "label": "登记跟踪", "note": "PENDING.set(tid,{url,tabId,name})；tabId 缺失时取当前活动标签页；启动 1.5s 轮询定时器（现状保持）" },
+    { "id": "n3", "kind": "step", "label": "持久化快照", "note": "本批新增：把 PENDING 全量写入 chrome.storage.session（浏览器会话内存活，SW 被杀后可恢复）" },
+    { "id": "n4", "kind": "step", "label": "轮询 /status", "note": "仅在有跟踪任务时轮询；按上一采样计算瞬时速度（现状保持）" },
+    { "id": "n5", "kind": "decision", "label": "任务状态判定", "note": "按服务端 /status 的 t.status 分支" },
+    { "id": "n6", "kind": "step", "label": "进行中 → HUD 进度", "note": "区分 排队中 / 连接中 / 百分比+速度（1.2.1 行为保持）" },
+    { "id": "n7", "kind": "step", "label": "终态 → 结果呈现", "note": "done：HUD 完成 + 系统通知 + 徽标 ✓；error/cancelled：HUD 失败 + 通知 + 徽标 !" },
+    { "id": "n8", "kind": "end", "label": "收尾", "note": "从 PENDING 删除该 tid 并写回 storage；PENDING 空则停轮询（结束）" },
+    { "id": "r1", "kind": "recovery", "label": "SW 唤醒/重启", "note": "本批新增入口：service worker 休眠、被杀、崩溃或浏览器更新后重新加载；onAlarm(idm-tick) 或任意事件触发" },
+    { "id": "r2", "kind": "recovery", "label": "恢复跟踪", "note": "本批新增：从 storage.session 读回 PENDING；有未完成任务且无定时器 → 重启轮询（不重复推送初始『排队中』HUD）" },
+    { "id": "r3", "kind": "fallback", "label": "降级为内存跟踪", "note": "storage.session 写入失败：保持现状行为（重启即丢跟踪），不阻塞主流程" },
+    { "id": "r4", "kind": "fallback", "label": "服务不可达重试", "note": "/status 拉取失败：保留任务与定时器，下一轮再试（现状行为保持）" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4" },
+    { "from": "n4", "to": "n5" },
+    { "from": "n5", "to": "n6", "label": "pending / running" },
+    { "from": "n5", "to": "n7", "label": "done / error / cancelled" },
+    { "from": "n6", "to": "n4", "label": "下一轮" },
+    { "from": "n7", "to": "n8" },
+    { "from": "r1", "to": "r2" },
+    { "from": "r2", "to": "n4", "label": "有未完成任务且无定时器" },
+    { "from": "r2", "to": "n8", "label": "无未完成任务（仅刷新徽标后结束）" },
+    { "from": "n3", "to": "r3", "label": "写入失败" },
+    { "from": "r3", "to": "n4" },
+    { "from": "n4", "to": "r4", "label": "拉取失败" },
+    { "from": "r4", "to": "n4", "label": "下一轮重试" }
+  ]
+}

@@ -6,6 +6,20 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.3.0 - 2026-10-21
+
+### Added
+- **跟踪状态跨 service worker 重启持久化。** 被跟踪任务表（PENDING）原先只在 MV3 service
+  worker 的内存里：worker 被休眠/杀掉重启后清空，而 `idm-tick` 闹钟唤醒的 `pollOnce()` 见
+  空表直接返回——"worker 被休眠时靠它续上完成通知"的兜底实际不成立，长下载的完成/失败
+  通知与页面浮层终态会静默丢失。现在任务登记与收尾都把快照写入 `chrome.storage.session`
+  （浏览器会话内存活），SW 重启后恢复并续上轮询；storage 不可用时降级为原内存跟踪。
+- 恢复路径不重发初始「排队中」浮层，避免唤醒时闪一下。速度采样不持久化：恢复后首个
+  采样周期速度显示 0 属预期，下一轮即恢复。
+
+### Fixed
+- 任务收尾时同步清理其速度采样条目（原先跨 SW 生命周期缓慢累积）。
+
 ## Extension 1.2.1 - 2026-10-21
 
 ### Fixed
