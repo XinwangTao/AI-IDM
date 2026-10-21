@@ -291,11 +291,20 @@ chrome.downloads.onCreated.addListener(async (item) => {
   const filename = basename(item.filename);
   try {
     await chrome.downloads.cancel(item.id);
-    await chrome.downloads.erase({ id: item.id }).catch(() => {});
   } catch (e) {
     // 已经下完/取消不掉，就不要抢
     return;
   }
+
+  // 取消后必须给浏览器一点时间删掉自己的临时文件（未确认 NNNNNN.crdownload），
+  // 否则立刻 erase 会让那个 0 字节的空壳变成孤儿文件，用户看到就以为下崩了。
+  setTimeout(() => {
+    chrome.downloads.erase({ id: item.id }, () => {
+      void chrome.runtime.lastError;
+      // 再做一次，覆盖 cancel→interrupt 的时序差
+      setTimeout(() => chrome.downloads.erase({ id: item.id }, () => void chrome.runtime.lastError), 600);
+    });
+  }, 900);
 
   try {
     await send(item.url, {
