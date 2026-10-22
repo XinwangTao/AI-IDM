@@ -1,0 +1,61 @@
+{
+  "name": "extension_open_folder",
+  "title": "下载完成后打开系统文件夹",
+  "kind": "workflow",
+  "status": "已确认并实施（L1-D，2026-10-22）",
+  "created": "2026-10-22",
+  "depends_on": ["extension_tracking_workflow"],
+  "batch": {
+    "in_scope": [
+      "background.js：DEFAULTS.openFolder=true；pollOnce() 的 done 分支调 POST /reveal；同一目录 2s 内合并为一次",
+      "server.py：新增 POST /reveal {path}，令牌保护，路径必须在 download_dir 内",
+      "server.py：按平台打开资源管理器并选中文件（Windows explorer /select，macOS open -R，其他 xdg-open）",
+      "options.html / options.js：新增「下载完成后打开文件夹」勾选项（默认开）"
+    ],
+    "out_of_scope": [
+      "content.js 浮层",
+      "engine.py / queue.py",
+      "CLI / MCP / 面板发起的下载不自动打开文件夹",
+      "既有 /add /status /cancel /remove 语义与完成通知、徽标时序"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "轮询到任务完成", "note": "pollOnce() 看到 t.status === 'done'；接在前置图 extension_tracking_workflow 的 n5→n7 done 分支" },
+    { "id": "n2", "kind": "decision", "label": "是否自动打开", "note": "本批新增：① openFolder 为真；② t.dest 非空；③ 同一目录 2 秒内未打开过" },
+    { "id": "n3", "kind": "step", "label": "请求本地服务打开", "note": "本批新增：POST /reveal {path: t.dest}，带 X-AI-IDM-Token，超时 3s，失败不重试" },
+    { "id": "n4", "kind": "decision", "label": "服务端校验", "note": "本批新增：路径规范化后必须位于 download_dir 之内；文件不存在则退回打开其所在目录" },
+    { "id": "n5", "kind": "step", "label": "在资源管理器中选中并置顶", "note": "本批新增：Windows explorer /select,<path>；macOS open -R；其他 xdg-open <dir>；窗口出来后再置顶（SetForegroundWindow → AttachThreadInput → SwitchToThisWindow，失败闪任务栏）。提权运行的服务抢不到前台（UIPI），置顶会降级为闪任务栏；应立即返回，不阻塞下载队列" },
+    { "id": "n6", "kind": "end", "label": "原有完成收尾不变", "note": "HUD 完成卡 + 系统通知（含路径）+ 徽标 ✓ + 写回 storage；打开失败也不改变这些行为" },
+    { "id": "f1", "kind": "fallback", "label": "开关关闭 / 无路径", "note": "openFolder=false 或 t.dest 为空 → 跳过 n3–n5" },
+    { "id": "f2", "kind": "fallback", "label": "合并到上一次打开", "note": "同一目录 2s 内已打开一次 → 跳过，防止批量下载弹出多个窗口" },
+    { "id": "f3", "kind": "fallback", "label": "服务拒绝或不可达", "note": "403 越界 / 404 不存在 / 超时 → 静默跳过，不额外通知" },
+    { "id": "f4", "kind": "fallback", "label": "系统无法打开", "note": "无图形会话、explorer 启动异常 → 服务返回 ok:false，静默跳过" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3", "label": "开关开 & dest 非空 & 非同目录合并中" },
+    { "from": "n2", "to": "f1", "label": "开关关 / 无 dest" },
+    { "from": "n2", "to": "f2", "label": "2s 内同目录已打开" },
+    { "from": "n3", "to": "n4", "label": "HTTP 200 进入校验" },
+    { "from": "n3", "to": "f3", "label": "超时 / 非 2xx" },
+    { "from": "n4", "to": "n5", "label": "路径在 download_dir 内" },
+    { "from": "n4", "to": "f3", "label": "越界（403）" },
+    { "from": "n5", "to": "n6", "label": "已发起打开" },
+    { "from": "n5", "to": "f4", "label": "启动失败" },
+    { "from": "f1", "to": "n6" },
+    { "from": "f2", "to": "n6" },
+    { "from": "f3", "to": "n6" },
+    { "from": "f4", "to": "n6" }
+  ],
+  "mapping": [
+    { "file": "browser-extension/background.js", "change": "DEFAULTS.openFolder=true；done 分支 reveal()；同目录 2s 合并表", "nodes": ["n2", "n3", "f2"] },
+    { "file": "ai_idm/server.py", "change": "POST /reveal：token 校验 → 路径规范化 → download_dir 越界 403 → 平台打开", "nodes": ["n4", "n5", "f3", "f4"] },
+    { "file": "browser-extension/options.html, options.js", "change": "勾选项「下载完成后打开文件夹」默认勾选", "nodes": ["n2", "f1"] },
+    { "file": "tests/test_server.py", "change": "第 9 组 reveal：目录内 200 / 目录外 403 / 无令牌 401 / 缺 path 400", "nodes": ["n4", "f3"] }
+  ],
+  "open_questions": [
+    "Q1 默认值：勾选项默认开（装好即生效）？",
+    "Q2 合并策略：同一目录 2 秒内只开一次窗口，还是每完成一个都开？",
+    "Q3 触发范围：只对浏览器扩展接管的下载自动打开，CLI/MCP/面板不打开？"
+  ]
+}

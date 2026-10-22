@@ -1,32 +1,27 @@
-/* 弹窗：显示服务状态 + 当前标签页 + 最近任务（1.5s 轮询） */
+/* 弹窗：显示服务状态 + 当前标签页 + 最近任务（0.8s 轮询，增量更新）
+ *
+ * 1.9.1 起不再每轮全量重写 innerHTML：行按任务 id 复用，只改变化的文本/宽度，
+ * 否则每 1.5s 重建会把正在点的按钮、悬停态和滚动位置一起打断。
+ */
 
 const $ = (s) => document.querySelector(s);
 const DEFAULTS = { port: 13391, token: "", mode: "auto" };
+const REFRESH_MS = 800;
 
 let cfg = { ...DEFAULTS };
 let currentUrl = "";
+
+const rowMap = new Map();   // id -> { el, nm, bar, pct, btn, st }
+const busy = new Set();     // 已点「取消/移除」、等结果的 id
 
 async function loadCfg() {
   const got = await chrome.storage.local.get(Object.keys(DEFAULTS));
   cfg = { ...DEFAULTS, ...got };
 }
 
-function fmt(n) {
-  if (!n) return "-";
-  const u = ["B", "KB", "MB", "GB", "TB"];
-  let v = n, i = 0;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
-  return (i ? v.toFixed(1) : Math.round(v)) + u[i];
-}
-
 function basename(p) {
   if (!p) return "";
   return String(p).replace(/\\/g, "/").split("/").filter(Boolean).pop() || p;
-}
-
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 async function api(path, opt = {}) {
@@ -63,27 +58,71 @@ async function ping() {
   }
 }
 
+function makeRow(id) {
+  const el = document.createElement("div");
+  el.className = "row";
+  el.dataset.id = id;
+  el.innerHTML = `<span class="nm"></span><span class="bar"><i></i></span>`
+    + `<span class="pct"></span><button class="act"></button>`;
+  return {
+    el,
+    nm: el.querySelector(".nm"),
+    bar: el.querySelector(".bar > i"),
+    pct: el.querySelector(".pct"),
+    btn: el.querySelector(".act"),
+    st: "",
+  };
+}
+
+function updateRow(r, t) {
+  const st = t.status || "";
+  const name = basename(t.dest) || basename(t.url) || t.url || "";
+  const pct = Math.max(0, Math.min(100, t.percent || 0));
+  const active = st === "pending" || st === "running";
+  const id = String(t.id);
+
+  if (r.nm.textContent !== name) r.nm.textContent = name;
+  const w = pct.toFixed(0) + "%";
+  if (r.bar.style.width !== w) r.bar.style.width = w;
+  const pctText = pct.toFixed(0) + "%";
+  if (r.pct.textContent !== pctText) r.pct.textContent = pctText;
+  const copy = t.dest || t.url || "";
+  if (r.el.dataset.copy !== copy) r.el.dataset.copy = copy;
+  const title = t.error || t.url || "";
+  if (r.el.title !== title) r.el.title = title;
+  // 只在状态变化时改 class，别把行内「已复制」反馈抹掉
+  if (r.st !== st) { r.el.className = "row " + st; r.st = st; }
+
+  const act = active ? "cancel" : "remove";
+  const label = active ? "取消" : "移除";
+  if (r.btn.dataset.act !== act) r.btn.dataset.act = act;
+  if (r.btn.textContent !== label) r.btn.textContent = label;
+  r.btn.disabled = busy.has(id);
+}
+
 function render(tasks) {
   const rows = $("#rows");
-  if (!tasks || !tasks.length) {
-    rows.innerHTML = '<div class="empty">暂无任务</div>';
+  const list = tasks || [];
+  if (!list.length) {
+    if (rowMap.size) { rows.innerHTML = '<div class="empty">暂无任务</div>'; rowMap.clear(); }
     return;
   }
-  rows.innerHTML = tasks.slice(0, 8).map((t) => {
-    const st = t.status || "";
-    const name = basename(t.dest) || basename(t.url) || t.url;
-    const pct = Math.max(0, Math.min(100, t.percent || 0));
-    // 进行中可取消（保留断点）；已结束可移除（只删记录不删文件）
-    const active = st === "pending" || st === "running";
-    const act = `<button class="act" data-act="${active ? "cancel" : "remove"}"
-      data-id="${esc(t.id)}">${active ? "取消" : "移除"}</button>`;
-    return `<div class="row ${st}" data-copy="${esc(t.dest || t.url || "")}" title="${esc(t.error || t.url || "")}">
-      <span class="nm">${esc(name)}</span>
-      <span class="bar"><i style="width:${pct}%"></i></span>
-      <span class="pct">${pct.toFixed(0)}%</span>
-      ${act}
-    </div>`;
-  }).join("");
+  const empty = rows.querySelector(".empty");
+  if (empty) empty.remove();
+
+  const seen = new Set();
+  list.forEach((t, i) => {
+    const id = String(t.id);
+    seen.add(id);
+    let r = rowMap.get(id);
+    if (!r) { r = makeRow(id); rowMap.set(id, r); }
+    updateRow(r, t);
+    // 只在该行不在目标位置时移动它，避免每轮都触发重排
+    if (rows.children[i] !== r.el) rows.insertBefore(r.el, rows.children[i] || null);
+  });
+  for (const [id, r] of [...rowMap.entries()]) {
+    if (!seen.has(id)) { r.el.remove(); rowMap.delete(id); }
+  }
 }
 
 async function refresh() {
@@ -132,18 +171,21 @@ $("#opts").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
-// 列表用事件委托：refresh() 每 1.5s 重写 innerHTML，监听器必须挂在容器上
+// 列表用事件委托：行会复用，监听器必须挂在容器上
 $("#rows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button.act");
   if (btn) {
-    if (btn.disabled) return;
-    const verb = btn.dataset.act === "cancel" ? "取消" : "移除";
+    const id = btn.closest(".row") && btn.closest(".row").dataset.id;
+    if (!id || busy.has(id)) return;
+    busy.add(id);
     btn.disabled = true;
+    const verb = btn.dataset.act === "cancel" ? "取消" : "移除";
     try {
-      await api(`/${btn.dataset.act}/${encodeURIComponent(btn.dataset.id)}`, { method: "POST" });
+      await api(`/${btn.dataset.act}/${encodeURIComponent(id)}`, { method: "POST" });
     } catch (err) {
       $("#foot").textContent = `${verb}失败：${err.message || err}`;
     }
+    busy.delete(id);
     refresh();
     return;
   }
@@ -153,7 +195,7 @@ $("#rows").addEventListener("click", async (e) => {
   try {
     await navigator.clipboard.writeText(row.dataset.copy);
     $("#foot").textContent = "已复制路径";
-    row.classList.add("copied");          // 行内反馈：footer 提示会被 1.5s 刷新覆盖
+    row.classList.add("copied");          // 行内反馈：footer 提示会被下一轮刷新覆盖
     setTimeout(() => row.classList.remove("copied"), 1200);
   } catch (_) {
     $("#foot").textContent = "复制失败（弹窗失焦时剪贴板可能不可用）";
@@ -164,5 +206,5 @@ $("#rows").addEventListener("click", async (e) => {
   await loadCfg();
   await initTab();
   await refresh();
-  setInterval(refresh, 1500);
+  setInterval(refresh, REFRESH_MS);
 })();

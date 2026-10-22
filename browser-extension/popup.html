@@ -39,7 +39,7 @@
   .nm { flex:1; min-width:0; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .pct { font-size:11px; color:var(--muted); flex:none; width:38px; text-align:right; }
   .bar { height:4px; border-radius:2px; background:var(--line); width:52px; flex:none; overflow:hidden; }
-  .bar > i { display:block; height:100%; width:0; background:var(--blue); }
+  .bar > i { display:block; height:100%; width:0; background:var(--blue); transition:width .35s ease; }
   .row.done .bar > i { background:var(--ok); }
   .row.error .bar > i { background:var(--err); }
   .row .act { width:auto; flex:none; padding:2px 8px; font-size:11px; border-radius:6px;

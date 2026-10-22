@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Archify · hud_crosstab_and_reveal_reuse</title>
+<style>
+ body{font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;margin:0;background:#f6f7f9;color:#1f2430}
+ header{padding:18px 28px;background:#1f2430;color:#fff} header h1{margin:0;font-size:18px}
+ header .meta{opacity:.75;font-size:12.5px;margin-top:4px}
+ .banner{padding:10px 28px;background:#fff7ed;border-bottom:1px solid #fed7aa;color:#9a3412;font-weight:600}
+ main{max-width:1060px;margin:0 auto;padding:20px 28px 60px} h2{font-size:15px;margin:26px 0 12px}
+ .lanes{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap} .col{flex:1 1 420px}
+ .col h3{font-size:13px;color:#475569;margin:0 0 10px}
+ .node{border:1.5px solid #2563eb;background:#fff;border-radius:10px;padding:9px 14px;max-width:460px;margin-bottom:10px}
+ .node .id{font-size:11px;color:#94a3b8;font-weight:700} .node .label{font-weight:600}
+ .node .note{font-size:12px;color:#64748b;margin-top:2px}
+ .start{border-color:#16a34a} .decision{border-style:dashed;border-color:#d97706} .end{border-color:#334155}
+ .fallback{border-style:dashed;border-color:#94a3b8;background:#f8fafc} .fallback .label,.fallback .note{color:#475569}
+ table{border-collapse:collapse;width:100%;background:#fff;font-size:12.5px} th,td{border:1px solid #e2e8f0;padding:5px 10px;text-align:left;vertical-align:top}
+ th{background:#f1f5f9} code{background:#eef2ff;padding:1px 5px;border-radius:4px;font-size:12px}
+</style></head><body>
+<header><h1>Archify · 浮层跨标签页 + 打开文件夹复用窗口</h1>
+<div class="meta">name: extension_hud_crosstab_and_reveal_reuse · kind: workflow · 创建: 2026-10-22 · 11 节点（主路径 8 + 出口 3）· 旁路 JSON: extension_hud_crosstab_and_reveal_reuse_workflow.json</div></header>
+<div class="banner">状态：已确认并实施（L1-D，2026-10-22，扩展 1.11.0 / 服务 1.14.0）。只动 background.js / content.js / server.py 的 Windows 分支。</div>
+<main>
+<h2>主路径</h2><div class="col">
+<div class="node start"><div class="id">n1 · start</div><div class="label">轮询到进度</div><div class="note">0.5s /status；每个任务计算目标标签页 = {发起标签页, 当前活动标签页}</div></div>
+<div class="node "><div class="id">n2 · step</div><div class="label">推送进度到目标标签页</div><div class="note">同一 key 推给每个目标页；记录 key→tabs</div></div>
+<div class="node "><div class="id">n3 · step</div><div class="label">清理非目标页</div><div class="note">之前有卡、这次不在目标里的标签页 → 发 phase=gone（只移除，不屏蔽）</div></div>
+<div class="node "><div class="id">n4 · step</div><div class="label">终态广播</div><div class="note">done/error 发给所有持卡标签页，然后删除 key→tabs</div></div>
+<div class="node "><div class="id">n5 · step</div><div class="label">下载完成触发打开</div><div class="note">扩展 POST /reveal（现状）</div></div>
+<div class="node "><div class="id">n6 · step</div><div class="label">复用窗口选中文件</div><div class="note">SHOpenFolderAndSelectItems：已有该文件夹窗口则复用，没有则新建</div></div>
+<div class="node "><div class="id">n7 · step</div><div class="label">定位并置顶</div><div class="note">先找新窗口；没有新窗口就按标题（文件夹名 / 盘符）找既有窗口 → SetForegroundWindow/AttachThreadInput/SwitchToThisWindow → z 序兜底</div></div>
+<div class="node end"><div class="id">n8 · end</div><div class="label">收尾</div><div class="note">HUD 终态、徽标、通知（现状）</div></div>
+</div>
+<h2>出口</h2><div class="col">
+<div class="node fallback"><div class="id">f1 · fallback</div><div class="label">页签关闭</div><div class="note">tabs.onRemoved：从所有 key→tabs 里移除该页，不报错</div></div>
+<div class="node fallback"><div class="id">f2 · fallback</div><div class="label">Shell API 失败</div><div class="note">回退 explorer /select 新窗口 + 原有的置顶/闪任务栏逻辑</div></div>
+<div class="node fallback"><div class="id">f3 · fallback</div><div class="label">无图形会话</div><div class="note">置顶失败静默；文件已下载完成（现状）</div></div>
+</div>
+<h2>边表（与旁路 JSON 一致）</h2>
+<table><tr><th>从</th><th>到</th><th>条件/标签</th></tr>
+<tr><td>n1</td><td>n2</td><td></td></tr>
+<tr><td>n2</td><td>n3</td><td></td></tr>
+<tr><td>n3</td><td>n4</td><td>任务终态</td></tr>
+<tr><td>n4</td><td>n8</td><td></td></tr>
+<tr><td>n5</td><td>n6</td><td></td></tr>
+<tr><td>n6</td><td>n7</td><td></td></tr>
+<tr><td>n7</td><td>n8</td><td></td></tr>
+<tr><td>n6</td><td>f2</td><td>API 失败</td></tr>
+<tr><td>f2</td><td>n7</td><td></td></tr>
+<tr><td>n7</td><td>f3</td><td>置顶失败</td></tr>
+<tr><td>f3</td><td>n8</td><td></td></tr>
+<tr><td>f1</td><td>n2</td><td>清理后继续</td></tr>
+</table>
+<h2>改动 → 节点/边</h2>
+<table><tr><th>文件</th><th>改动</th><th>节点/边</th></tr>
+<tr><td><code>browser-extension/background.js</code></td><td>目标页计算、key→tabs、gone 清理、终态广播、tabs.onRemoved</td><td>n1, n2, n3, n4, f1</td></tr>
+<tr><td><code>browser-extension/content.js</code></td><td>phase=gone 移除卡片</td><td>n3</td></tr>
+<tr><td><code>ai_idm/server.py</code></td><td>SHOpenFolderAndSelectItems + 标题定位 + 置顶；失败回退</td><td>n6, n7, f2, f3</td></tr>
+</table>
+<h2>验证记录（2026-10-22）</h2>
+<table><tr><th>项</th><th>结果</th></tr>
+<tr><td>浮层跨标签页</td><td>ext_smoke.js 16/16（目标页计算 / gone 清理 / 终态广播）；content_smoke.js 10/10（phase=gone 只移除不屏蔽）</td></tr>
+<tr><td>复用 + 选中 + 置顶</td><td>抗干扰验收：专属测试目录 reveal 两次 → 同一 hwnd、focused a1.txt→a2.txt、无新窗口、窗口到前台（<code>F:/cache/temp/reveal_verify_final.py</code>）</td></tr>
+<tr><td>盘根标题匹配修复</td><td>修复前 F:/ 置顶线程 z 序纹丝不动；修复后 0.1s 内到达前台（<code>splitdrive</code> 已含冒号，旧代码拼出 <code>f::</code> 永不匹配「新加卷 (F:)」）</td></tr>
+<tr><td>全量回归</td><td>node --check / py_compile / tests/run_all.py 通过；仓库 / Edge 加载目录 / zip 哈希一致</td></tr>
+</table>
+</main></body></html>

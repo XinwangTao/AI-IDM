@@ -1,0 +1,50 @@
+{
+  "name": "extension_notification_merge",
+  "title": "通知合并与弹窗列表完善",
+  "kind": "workflow",
+  "status": "已确认并实施（L1-D，2026-10-22，扩展 1.10.1）",
+  "created": "2026-10-22",
+  "depends_on": ["extension_download_ux"],
+  "batch": {
+    "in_scope": [
+      "background.js：删除接管成功的「已交给 AI-IDM 下载」通知",
+      "background.js：完成通知正文改为「总大小 · 落盘路径」；失败通知保持不变",
+      "popup.js：任务列表去掉 8 条上限，改为展示全部（容器已有滚动）"
+    ],
+    "out_of_scope": [
+      "notify 开关语义（false 仍一键全关）",
+      "浮层 / 徽标 / 自动打开文件夹",
+      "服务端任何改动"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "提交成功", "note": "POST /add 返回 tid；HUD 已从「正在接管」转「排队中」" },
+    { "id": "n2", "kind": "step", "label": "不再发「已交给」通知", "note": "本批删除：接管阶段只靠页面浮层反馈，系统通知留到终态" },
+    { "id": "n3", "kind": "step", "label": "跟踪与进度", "note": "0.5s 轮询 → 浮层插值（现状不变）" },
+    { "id": "n4", "kind": "decision", "label": "终态判定", "note": "done / error（cancelled 按 error 处理，现状）" },
+    { "id": "n5", "kind": "step", "label": "一条终态通知", "note": "本批改写：完成 = 「下载完成」+ 总大小 · 落盘路径；失败 = 「下载失败」+ 错误 · URL（现状）" },
+    { "id": "n6", "kind": "end", "label": "收尾", "note": "HUD 终态卡 6s/12s、徽标 ✓/!、自动打开文件夹（现状不变）" },
+    { "id": "f1", "kind": "fallback", "label": "notify 关闭", "note": "完成/失败都不弹系统通知，只留浮层与徽标（现状语义）" },
+    { "id": "f2", "kind": "fallback", "label": "提交失败 → 交回浏览器", "note": "保留「接管失败，已交回浏览器」通知（有实际后果，不能省）" },
+    { "id": "f3", "kind": "fallback", "label": "弹窗任务很多", "note": "列表展示全部任务，超出 250px 由容器滚动，不再截断到 8 条" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4", "label": "轮询到终态" },
+    { "from": "n4", "to": "n5", "label": "notify 开" },
+    { "from": "n4", "to": "f1", "label": "notify 关" },
+    { "from": "n5", "to": "n6" },
+    { "from": "f1", "to": "n6" },
+    { "from": "f2", "to": "n6", "label": "提交失败路径" },
+    { "from": "f3", "to": "n6", "label": "列表渲染（任意时刻）" }
+  ],
+  "mapping": [
+    { "file": "browser-extension/background.js", "change": "删除接管成功通知；完成通知正文加总大小", "nodes": ["n2", "n5", "f1", "f2"] },
+    { "file": "browser-extension/popup.js", "change": "去掉 slice(0, 8)", "nodes": ["f3"] }
+  ],
+  "open_questions": [
+    "Q1：删掉接管时的「已交给 AI-IDM 下载」通知（浮层已覆盖这段时间）？",
+    "Q2：完成通知正文改成「总大小 · 落盘路径」，失败通知不变？"
+  ]
+}

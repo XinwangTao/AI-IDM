@@ -47,8 +47,8 @@
 
 <h2>v2 批次范围</h2>
 <ul>
-  <li><b>动机（1.5.0 交付时报备过的疣）</b>：下载进行中点卡片 ×，卡片被移除后，1.5s 内的下一条进度推送会把它重建出来——用户关不掉。</li>
-  <li><b>In</b>：<code>content.js</code> — close 点击把 tid 加入 <code>dismissed</code> 屏蔽集并立即移除卡片；show/finish 前置判定，命中屏蔽集的消息一律忽略。</li>
+  <li><b>动机（1.5.0 交付时报备过的疣）</b>：下载进行中点卡片 ×，卡片被移除后，0.5s 内的下一条进度推送会把它重建出来——用户关不掉。</li>
+  <li><b>In</b>：<code>content.js</code> — close 点击把 key 加入 <code>dismissed</code> 屏蔽集并立即移除卡片；show/finish 前置判定，命中屏蔽集的消息一律忽略。</li>
   <li><b>Out</b>：background.js 无改动；弹窗任务管理（1.4.0 已交付）；轮询改 SSE；服务端任何改动。</li>
   <li><b>生命周期</b>：<code>dismissed</code> 是页面会话内的 Set——页面刷新/跳转后自然清空（卡片本来也随文档销毁），不引入持久化。</li>
 </ul>
@@ -56,15 +56,15 @@
 <div class="lanes">
   <div class="col">
     <h3>主路径（每任务一条生命周期）</h3>
-    <div class="node start"><div class="id">n1 · start</div><div class="label">需要展示任务状态</div><div class="note">background：track() 初始推送或 pollOnce() 轮询更新（每 1.5s）</div></div>
+    <div class="node start"><div class="id">n1 · start</div><div class="label">需要展示任务状态</div><div class="note">background：track() 初始推送或 pollOnce() 轮询更新（每 0.5s）</div></div>
     <div class="arrow">↓</div>
-    <div class="node"><div class="id">n2 · step</div><div class="label">组装并投递</div><div class="note">消息 {type:"hud", tid, payload} 经 chrome.tabs.sendMessage 发到任务所属 tab；payload 含 phase 与三态字段</div></div>
+    <div class="node"><div class="id">n2 · step</div><div class="label">组装并投递</div><div class="note">消息 {type:"hud", key, payload} 经 chrome.tabs.sendMessage 发到任务所属 tab；payload 含 phase 与三态字段</div></div>
     <div class="arrow">↓ <small>发送失败 → f1（注入兜底）</small></div>
-    <div class="node decision"><div class="id">n3 · decision</div><div class="label">content 侧判定 <span class="new" style="background:#ddd6fe;color:#6d28d9;border-radius:4px;padding:0 5px;font-size:10.5px;">v2 扩</span></div><div class="note">三重判定：payload 是否有效（含 tid、phase 已知）；tid 是否在 dismissed 屏蔽集；该 tid 是否已有卡片</div></div>
-    <div class="arrow">↓ <small>有效、未屏蔽、无卡片 → n4 · 已有卡片 → n5 · 已屏蔽 → f3 · 缺 tid / phase 未知 → f2</small></div>
+    <div class="node decision"><div class="id">n3 · decision</div><div class="label">content 侧判定 <span class="new" style="background:#ddd6fe;color:#6d28d9;border-radius:4px;padding:0 5px;font-size:10.5px;">v2 扩</span></div><div class="note">三重判定：payload 是否有效（含 key、phase 已知）；key 是否在 dismissed 屏蔽集；该 key 是否已有卡片</div></div>
+    <div class="arrow">↓ <small>有效、未屏蔽、无卡片 → n4 · 已有卡片 → n5 · 已屏蔽 → f3 · 缺 key / phase 未知 → f2</small></div>
     <div class="node"><div class="id">n4 · step</div><div class="label">建卡</div><div class="note">在堆叠容器末尾新建（新卡在最下方、贴近右下角）</div></div>
     <div class="arrow">↓</div>
-    <div class="node"><div class="id">n5 · step</div><div class="label">更新</div><div class="note">按 tid 定位既有卡片</div></div>
+    <div class="node"><div class="id">n5 · step</div><div class="label">更新</div><div class="note">按 key 定位既有卡片</div></div>
     <div class="arrow">↓（n4 / n5 汇合）</div>
     <div class="node"><div class="id">n6 · step</div><div class="label">渲染</div><div class="note">按 phase 渲染：progress 三态（排队/连接/进度，1.2.1 行为保持）；done/error 终态样式 · <b>用户点 ×（任意时刻）→ n9</b></div></div>
     <div class="arrow">↓</div>
@@ -75,11 +75,11 @@
 
   <div class="col">
     <h3>出口与用户退出</h3>
-    <div class="node end new2"><div class="id">n9 · end（v2 新增）</div><div class="label">× 关闭</div><div class="note">用户点卡片 ×：tid 加入 dismissed 屏蔽集并<b>立即从 DOM 移除</b>该卡。该任务后续消息经 n3 → f3 被忽略，卡片不再重建（修复 1.5.0 报备的疣）</div></div>
+    <div class="node end new2"><div class="id">n9 · end（v2 新增）</div><div class="label">× 关闭</div><div class="note">用户点卡片 ×：key 加入 dismissed 屏蔽集并<b>立即从 DOM 移除</b>该卡。该任务后续消息经 n3 → f3 被忽略，卡片不再重建（修复 1.5.0 报备的疣）</div></div>
     <p></p>
     <div class="node fallback"><div class="id">f1 · fallback</div><div class="label">注入兜底</div><div class="note">sendMessage 失败（SW 重启前开的老标签页无 content script）→ ensure() 按需注入 content.js 后重推（现状保持）→ 回 n3</div></div>
     <p></p>
-    <div class="node fallback"><div class="id">f2 · fallback</div><div class="label">防御忽略</div><div class="note">payload 缺 tid 或 phase 未知 → 忽略，不建卡</div></div>
+    <div class="node fallback"><div class="id">f2 · fallback</div><div class="label">防御忽略</div><div class="note">payload 缺 key 或 phase 未知 → 忽略，不建卡</div></div>
     <p></p>
     <div class="node fallback new2"><div class="id">f3 · fallback（v2 新增）</div><div class="label">屏蔽命中忽略</div><div class="note">已点 × 的任务，后续轮询消息一律忽略，卡片不再重建</div></div>
   </div>
@@ -92,8 +92,8 @@
   <tr><td>n2</td><td>n3</td><td></td></tr>
   <tr><td>n3</td><td>n4</td><td>有效、未屏蔽、无卡片</td></tr>
   <tr><td>n3</td><td>n5</td><td>已有卡片</td></tr>
-  <tr class="v2"><td>n3</td><td>f3</td><td>tid 已屏蔽（v2）</td></tr>
-  <tr><td>n3</td><td>f2</td><td>缺 tid / phase 未知</td></tr>
+  <tr class="v2"><td>n3</td><td>f3</td><td>key 已屏蔽（v2）</td></tr>
+  <tr><td>n3</td><td>f2</td><td>缺 key / phase 未知</td></tr>
   <tr><td>n4</td><td>n6</td><td></td></tr>
   <tr><td>n5</td><td>n6</td><td></td></tr>
   <tr><td>n6</td><td>n7</td><td></td></tr>

@@ -18,6 +18,8 @@ import json
 import os
 import re
 import secrets
+import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -81,6 +83,257 @@ def clean_headers(raw):
             continue
         out[k] = v
     return out
+
+
+def _explorer_window_handles():
+    """当前所有可见的资源管理器文件夹窗口（CabinetWClass）的 HWND 集合。"""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    found = set()
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _cb(hwnd, _lparam):
+        if user32.IsWindowVisible(hwnd):
+            name = ctypes.create_unicode_buffer(32)
+            user32.GetClassNameW(hwnd, name, 32)
+            if name.value == "CabinetWClass":
+                found.add(int(hwnd))
+        return True
+
+    user32.EnumWindows(proto(_cb), 0)
+    return found
+
+
+def _force_foreground(hwnd):
+    """把窗口切到前台。依次试 SetForegroundWindow → AttachThreadInput 变体 → SwitchToThisWindow。
+
+    后台服务没有前台权，SetForegroundWindow 常被静默忽略；AttachThreadInput 把
+    自己的线程挂到当前前台线程上再调用，实测能拿到前台。两种都失败时退回
+    SwitchToThisWindow（Alt+Tab 同款）。返回是否真的置顶成功。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    u = ctypes.windll.user32
+    k = ctypes.windll.kernel32
+    u.GetForegroundWindow.restype = wintypes.HWND
+    u.SetForegroundWindow.argtypes = [wintypes.HWND]
+    u.SetForegroundWindow.restype = wintypes.BOOL
+    u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    u.GetWindowThreadProcessId.restype = wintypes.DWORD
+    u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u.SwitchToThisWindow.argtypes = [wintypes.HWND, wintypes.BOOL]
+    k.GetCurrentThreadId.restype = wintypes.DWORD
+
+    h = wintypes.HWND(hwnd)
+    # 纯 Python 线程默认没有消息队列，AttachThreadInput 会直接失败；
+    # 先 PeekMessage 一下把队列建出来（实测后台服务里必须加这一步）。
+    u.PeekMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT,
+                               wintypes.UINT, wintypes.UINT]
+    u.PeekMessageW.restype = wintypes.BOOL
+    u.PeekMessageW(None, h, 0, 0, 0)                         # PM_NOREMOVE
+    u.ShowWindow(h, 9)                                       # SW_RESTORE：还原最小化
+    # 注意：GetForegroundWindow 的 restype 是 c_void_p，返回 int；要和 h.value 比，
+    # 直接和 HWND 实例比永远为 False（会把每次成功都当成失败）。
+    if u.GetForegroundWindow() == h.value:
+        return True
+    u.SetForegroundWindow(h)
+    time.sleep(0.12)
+    if u.GetForegroundWindow() == h.value:
+        return True
+    fg = u.GetForegroundWindow()
+    if fg:
+        fg_tid = u.GetWindowThreadProcessId(fg, None)
+        if u.AttachThreadInput(k.GetCurrentThreadId(), fg_tid, True):
+            u.SetForegroundWindow(h)
+            time.sleep(0.12)
+            u.AttachThreadInput(k.GetCurrentThreadId(), fg_tid, False)
+            if u.GetForegroundWindow() == h.value:
+                return True
+    u.SwitchToThisWindow(h, True)
+    time.sleep(0.12)
+    return u.GetForegroundWindow() == h.value
+
+
+def _raise_to_top(hwnd):
+    """拿不到前台权时的兜底：临时置顶再取消，把窗口挪到普通 z 序最前。
+
+    Windows 不允许后台进程抢输入焦点，但允许改自己的 z 序；视觉上它会盖住
+    其他窗口（用户点一下就恢复正常层级），比只闪任务栏更有用。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    u = ctypes.windll.user32
+    u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                               ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    u.SetWindowPos.restype = wintypes.BOOL
+    flags = 0x0001 | 0x0002 | 0x0040          # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+    u.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(-1), 0, 0, 0, 0, flags)   # HWND_TOPMOST
+    time.sleep(0.15)
+    u.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(-2), 0, 0, 0, 0, flags)   # HWND_NOTOPMOST
+
+
+def _flash_taskbar(hwnd):
+    """实在抢不到前台时闪任务栏，至少让用户知道窗口在哪（比静默弹在背后强）。"""
+    import ctypes
+    from ctypes import wintypes
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("hwnd", wintypes.HWND),
+                    ("dwFlags", wintypes.DWORD), ("uCount", wintypes.UINT),
+                    ("dwTimeout", wintypes.DWORD)]
+
+    fi = FLASHWINFO(ctypes.sizeof(FLASHWINFO), wintypes.HWND(hwnd),
+                    0x00000003 | 0x0000000C, 3, 0)            # FLASHW_ALL | FLASHW_TIMERNOFG
+    ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
+
+
+def _raise_explorer_window(before, folder=None, timeout=3.0):
+    """等资源管理器把窗口准备好，再把它切到前台。
+
+    复用已有窗口时不会有「新窗口」，所以先看新句柄，找不到就按标题（文件夹名/
+    盘符）找既有窗口——SHOpenFolderAndSelectItems 会把选中项放进那个窗口。
+    """
+    target = None
+    end = time.time() + timeout
+    while time.time() < end and target is None:
+        time.sleep(0.1)
+        try:
+            new = _explorer_window_handles() - before
+        except Exception:                                    # noqa: BLE001
+            return
+        if new:
+            target = max(new)
+        elif folder:
+            target = _find_explorer_window_for(folder)
+    if target is None:
+        return
+
+    for _ in range(8):
+        try:
+            if _force_foreground(target):
+                return
+        except Exception:                                    # noqa: BLE001
+            break
+    # 前台要不来（后台服务/高完整性都会被挡）：至少把窗口盖到最前，再闪任务栏
+    try:
+        _raise_to_top(target)
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        _flash_taskbar(target)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _shell_select(path):
+    """SHOpenFolderAndSelectItems：优先复用已有窗口并选中文件。
+
+    比 explorer /select 好在不会每次新开一个窗口（IDM 也是复用）。失败返回 False，
+    调用方回退到 explorer /select。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    shell32 = ctypes.windll.shell32
+    ole32 = ctypes.windll.ole32
+    shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+    shell32.ILCreateFromPathW.argtypes = [wintypes.LPCWSTR]
+    shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, wintypes.UINT,
+                                                   ctypes.c_void_p, wintypes.DWORD]
+    shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+    shell32.ILFree.argtypes = [ctypes.c_void_p]
+    try:
+        ole32.CoInitializeEx(None, 0x2)          # COINIT_APARTMENTTHREADED；已初始化返回 S_FALSE
+    except Exception:                            # noqa: BLE001
+        pass
+    pidl = shell32.ILCreateFromPathW(path)
+    if not pidl:
+        return False
+    try:
+        hr = shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0)
+    finally:
+        shell32.ILFree(pidl)
+    return hr == 0
+
+
+def _find_explorer_window_for(folder):
+    """按标题找显示该文件夹的资源管理器窗口（复用窗口时没有"新句柄"可认）。
+
+    标题形如「新加卷 (F:) - 文件资源管理器」或「Downloads - 文件资源管理器」，
+    所以用文件夹名（根目录用盘符）做包含匹配，不依赖本地化文案。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    u = ctypes.windll.user32
+    u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    u.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    drive = os.path.splitdrive(folder)[0]      # "F:"（已含冒号，别再补一个）
+    name = os.path.basename(folder.rstrip("\\/"))
+    needle = (name or drive).lower()           # 根目录 → "f:" 匹配「新加卷 (F:)」标题
+    if not needle:
+        return None
+    found = []
+
+    def _cb(hwnd, _lparam):
+        if not u.IsWindowVisible(hwnd):
+            return True
+        cls = ctypes.create_unicode_buffer(32)
+        u.GetClassNameW(hwnd, cls, 32)
+        if cls.value != "CabinetWClass":
+            return True
+        title = ctypes.create_unicode_buffer(512)
+        u.GetWindowTextW(hwnd, title, 512)
+        if needle in title.value.lower():
+            found.append(int(hwnd))
+        return True
+
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    u.EnumWindows(proto(_cb), 0)
+    return max(found) if found else None
+
+
+def reveal_in_file_manager(path):
+    """在系统文件管理器里定位 path（文件则选中它，目录则直接打开）。
+
+    返回 (ok, error)。只用 Popen 起进程、不等它退出：explorer.exe 即使成功
+    也会返回非零码，等它没意义，还会拖慢下载完成的通知。文件已不存在时退到
+    打开其所在目录，目录也没了才算失败。窗口出来后另起线程置顶（见
+    _raise_explorer_window），HTTP 请求不等它。
+    """
+    p = os.path.abspath(path)
+    if not os.path.exists(p):
+        parent = os.path.dirname(p)
+        if not os.path.isdir(parent):
+            return False, "路径不存在"
+        p = parent
+    try:
+        if os.name == "nt":
+            before = _explorer_window_handles()
+            folder = p if os.path.isdir(p) else os.path.dirname(p)
+            used_shell = False
+            if not os.path.isdir(p):
+                used_shell = _shell_select(p)     # 复用窗口 + 选中；不新开窗口
+            if not used_shell:
+                if os.path.isdir(p):
+                    subprocess.Popen(["explorer", os.path.normpath(p)])
+                else:
+                    # explorer 自己解析命令行：/select 后面必须拼成一整个参数
+                    subprocess.Popen(f'explorer /select,"{os.path.normpath(p)}"')
+            threading.Thread(target=_raise_explorer_window, args=(before, folder),
+                             daemon=True).start()
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", p])
+        else:
+            subprocess.Popen(["xdg-open", p if os.path.isdir(p) else os.path.dirname(p)])
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"无法启动文件管理器: {e}"
+    return True, None
 
 
 # ---------------------------------------------------------------- 服务
@@ -247,6 +500,8 @@ class TakeoverServer:
                 if path.startswith("/remove/"):
                     ok = app.q.remove(path.rsplit("/", 1)[-1])
                     return self._json(200, {"ok": ok})
+                if path == "/reveal":
+                    return self._handle_reveal(payload)
                 return self._json(404, {"ok": False, "error": "未知接口"})
 
             # --- 业务 ---
@@ -318,6 +573,24 @@ class TakeoverServer:
                     app.q.update(tid, status="cancelled", finished_at=time.time())
                     return self._json(200, {"ok": True, "id": tid, "status": "cancelled"})
                 return self._json(409, {"ok": False, "error": f"任务已是 {row['status']}"})
+
+            def _handle_reveal(self, p):
+                raw = p.get("path")
+                if not isinstance(raw, str) or not raw.strip():
+                    return self._json(400, {"ok": False, "error": "缺少 path"})
+                real = os.path.realpath(raw.strip())
+                root = os.path.normcase(os.path.realpath(app.download_dir))
+                try:
+                    inside = os.path.commonpath([root, os.path.normcase(real)]) == root
+                except ValueError:                           # 不同盘符
+                    inside = False
+                if not inside:
+                    # 令牌泄露也不能把服务变成任意路径打开器：只开下载目录内的
+                    return self._json(403, {"ok": False, "error": "路径不在下载目录内"})
+                ok, err = reveal_in_file_manager(real)
+                if not ok:
+                    return self._json(200, {"ok": False, "error": err})
+                return self._json(200, {"ok": True, "path": real})
 
         return Handler
 

@@ -1,7 +1,7 @@
 /* 设置页：读写 chrome.storage.local，测试与本地服务的连通性 */
 
 const $ = (s) => document.querySelector(s);
-const DEFAULTS = { port: 13391, token: "", mode: "auto", forwardCookies: true, notify: true };
+const DEFAULTS = { port: 13391, token: "", mode: "auto", forwardCookies: true, notify: true, openFolder: true };
 
 function setMsg(text, kind) {
   const el = $("#msg");
@@ -17,6 +17,7 @@ async function load() {
   $("#mode").value = c.mode;
   $("#cookies").checked = !!c.forwardCookies;
   $("#notify").checked = !!c.notify;
+  $("#openFolder").checked = !!c.openFolder;
 }
 
 async function save() {
@@ -27,6 +28,7 @@ async function save() {
     mode: $("#mode").value,
     forwardCookies: $("#cookies").checked,
     notify: $("#notify").checked,
+    openFolder: $("#openFolder").checked,
   };
   await chrome.storage.local.set(c);
   setMsg("已保存", "ok");

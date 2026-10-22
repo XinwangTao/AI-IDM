@@ -4,9 +4,11 @@
  * Windows 专注助手/权限拦掉，用户会以为"没下成"。这个浮层直接贴在页面
  * 右下角，显示进度/速度/结果，不依赖任何系统通知能力。
  *
- * 1.5.0 起按任务 id 建卡：同一标签页里多个被接管任务各自一张卡，纵向
- * 堆叠（新卡贴近右下角、向上生长），终态停留几秒后从 DOM 移除。
+ * 1.5.0 起按任务建卡：同一标签页里多个被接管任务各自一张卡，纵向堆叠
+ * （新卡贴近右下角、向上生长），终态停留几秒后从 DOM 移除。
  * 1.7.0 起 × 关闭 = 把任务加入 dismissed 屏蔽集，后续推送不再重建卡片。
+ * 1.9.1 起按客户端 key 建卡（提交 /add 之前就先出卡，返回后沿用同一张），
+ * 并用上次速度做 200ms 插值 + ETA，进度不再 1.5s 一跳一跳。
  */
 
 (() => {
@@ -17,8 +19,9 @@
   let root = null;
   let stack = null;
 
-  const cards = new Map();     // tid -> { card, hideTimer }
+  const cards = new Map();     // key -> { el, title, name, fill, left, right, hideTimer, st }
   const dismissed = new Set(); // 用户点过 × 的任务：本页面会话内不再显示，后续消息一律忽略
+  let ticker = null;           // 200ms 插值定时器：只在有进行中任务时运行
 
   const CSS = `
     :host { all: initial; }
@@ -47,10 +50,10 @@
     .close:hover { color: #fff; background: rgba(255,255,255,.08); }
     .name { padding: 0 12px; color: #cfd6e2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .bar { height: 5px; margin: 9px 12px 0; background: rgba(255,255,255,.10); border-radius: 99px; overflow: hidden; }
-    .fill { height: 100%; width: 0%; background: linear-gradient(90deg,#3b82f6,#22d3ee); transition: width .25s ease; }
+    .fill { height: 100%; width: 0%; background: linear-gradient(90deg,#3b82f6,#22d3ee); transition: width .2s linear; }
     .card.done .fill { background: #16a34a; }
     .card.err .fill { background: #dc2626; }
-    .meta { display: flex; justify-content: space-between; padding: 6px 12px 10px; color: #9aa4b2; font-size: 11.5px; }
+    .meta { display: flex; justify-content: space-between; gap: 10px; padding: 6px 12px 10px; color: #9aa4b2; font-size: 11.5px; }
     .meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   `;
 
@@ -72,13 +75,24 @@
     return (i === 0 ? v : v.toFixed(1)) + u[i];
   }
 
-  function cardFor(tid) {
+  function etaText(st, shown) {
+    if (!st.total || !st.speed || st.speed <= 0) return "";
+    const remain = st.total * (1 - Math.min(shown, 100) / 100);
+    const sec = remain / st.speed;
+    if (!isFinite(sec) || sec <= 0) return "";
+    const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+    return m >= 60
+      ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`
+      : `${m}:${String(Math.min(s, 59)).padStart(2, "0")}`;
+  }
+
+  function cardFor(key) {
     ensure();
-    let c = cards.get(tid);
+    let c = cards.get(key);
     if (c) return c;
-    const card = document.createElement("div");
-    card.className = "card hide";
-    card.innerHTML = `
+    const el = document.createElement("div");
+    el.className = "card hide";
+    el.innerHTML = `
       <div class="head">
         <span class="dot"></span>
         <span class="title">AI-IDM 下载中</span>
@@ -87,83 +101,136 @@
       <div class="name"></div>
       <div class="bar"><div class="fill"></div></div>
       <div class="meta"><span class="left">0%</span><span class="right"></span></div>`;
-    stack.appendChild(card);          // 追加到末尾 = 视觉上最贴近右下角，向上生长
-    card.querySelector(".close").addEventListener("click", () => dismiss(tid));
-    c = { card, hideTimer: null };
-    cards.set(tid, c);
+    stack.appendChild(el);            // 追加到末尾 = 视觉上最贴近右下角，向上生长
+    el.querySelector(".close").addEventListener("click", () => dismiss(key));
+    c = {
+      el,
+      title: el.querySelector(".title"),
+      name: el.querySelector(".name"),
+      fill: el.querySelector(".fill"),
+      left: el.querySelector(".left"),
+      right: el.querySelector(".right"),
+      hideTimer: null,
+      st: { running: false, percent: 0, speed: 0, total: 0, connections: 0, at: 0 },
+    };
+    cards.set(key, c);
     return c;
   }
 
-  function show(tid, p) {
-    if (dismissed.has(tid)) return;   // f3：已屏蔽，进度推送不重建卡
-    const c = cardFor(tid);
-    c.card.classList.remove("hide", "done", "err");
-    clearTimeout(c.hideTimer);
-
-    const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
-    const title = c.card.querySelector(".title");
-    const left = c.card.querySelector(".left");
-    const right = c.card.querySelector(".right");
-    const fill = c.card.querySelector(".fill");
-
-    // 三种状态分开显示，避免"排队中"被误读成"卡在 0%"（1.2.1 行为保持）
-    if (p.queued) {
-      title.textContent = "AI-IDM 排队中…";
-      left.textContent = "排队中";
-      right.textContent = "等待空闲连接";
-      fill.style.width = "0%";
-    } else if (p.connecting) {
-      title.textContent = "AI-IDM 连接中…";
-      left.textContent = "连接中";
-      right.textContent = "";
-      fill.style.width = "0%";
-    } else {
-      title.textContent = "AI-IDM 下载中";
-      fill.style.width = pct + "%";
-      left.textContent = pct.toFixed(1) + "%";
-      right.textContent =
-        [p.speed ? fmt(p.speed) + "/s" : "", p.total ? fmt(p.total) : ""]
-          .filter(Boolean).join(" · ");
+  /** 按速度外推一帧。真实值每 0.5s 到一次，中间靠它把进度条推得连续。 */
+  function paint(c, now) {
+    const st = c.st;
+    if (!st.running) return;
+    const dt = (now - st.at) / 1000;
+    let shown = st.percent;
+    if (st.speed > 0 && st.total > 0 && dt > 0 && dt <= 2) {
+      shown = st.percent + (st.speed * dt / st.total) * 100;
+      shown = Math.min(shown, st.percent + 15);   // 外推最多 15 个点，别替服务端说谎
     }
-    c.card.querySelector(".name").textContent = p.name || p.url || "";
+    shown = Math.min(shown, 99);                  // 100% 只由 done 给
+    c.fill.style.width = shown + "%";
+    c.left.textContent = shown.toFixed(0) + "%";
+    c.right.textContent = [
+      st.speed ? fmt(st.speed) + "/s" : "",
+      etaText(st, shown) ? "剩 " + etaText(st, shown) : "",
+      st.connections ? st.connections + " 连接" : "",
+    ].filter(Boolean).join(" · ");
   }
 
-  function finish(tid, p, ok) {
-    if (dismissed.has(tid)) return;   // f3：已屏蔽，终态也不重建卡
-    const c = cardFor(tid);
-    c.card.classList.remove("hide");
-    c.card.classList.toggle("done", ok);
-    c.card.classList.toggle("err", !ok);
+  function ensureTicker() {
+    if (ticker) return;
+    ticker = setInterval(() => {
+      const now = Date.now();
+      let active = false;
+      for (const c of cards.values()) {
+        // 2s 没新数据后 paint 本来就会冻结在同一帧；此时不再当活跃卡，停表等下次真值。
+        if (c.st.running && now - c.st.at <= 2000) { paint(c, now); active = true; }
+      }
+      if (!active) { clearInterval(ticker); ticker = null; }
+    }, 200);
+  }
+
+  function show(key, p) {
+    if (dismissed.has(key)) return;   // 已屏蔽：进度推送不重建卡
+    const c = cardFor(key);
+    c.el.classList.remove("hide", "done", "err");
     clearTimeout(c.hideTimer);
-    c.card.querySelector(".title").textContent = ok ? "AI-IDM 下载完成" : "AI-IDM 下载失败";
-    c.card.querySelector(".name").textContent = ok ? (p.dest || p.name || p.url || "") : (p.error || "未知错误");
-    c.card.querySelector(".fill").style.width = "100%";
-    c.card.querySelector(".left").textContent = ok ? "100%" : "";
-    c.card.querySelector(".right").textContent = ok ? fmt(p.total) : "";
-    // 终态停留后从 DOM 移除（旧版只是隐藏，节点会一直留着）
-    c.hideTimer = setTimeout(() => removeCard(tid), ok ? 6000 : 12000);
+    c.name.textContent = p.name || p.url || "";
+
+    const st = c.st;
+    st.speed = Number(p.speed) || 0;
+    st.total = Number(p.total) || 0;
+    if (p.connections) st.connections = Number(p.connections) || 0;
+
+    // 四种阶段分开显示：准备接管 / 排队 / 连接 / 下载，避免被误读成"卡在 0%"
+    if (p.handoff) {
+      st.running = false;
+      c.title.textContent = "AI-IDM 正在接管…";
+      c.left.textContent = "准备中";
+      c.right.textContent = "";
+      c.fill.style.width = "0%";
+    } else if (p.queued) {
+      st.running = false;
+      c.title.textContent = "AI-IDM 排队中…";
+      c.left.textContent = "排队中";
+      c.right.textContent = "等待空闲连接";
+      c.fill.style.width = "0%";
+    } else if (p.connecting) {
+      st.running = false;
+      c.title.textContent = "AI-IDM 连接中…";
+      c.left.textContent = "连接中";
+      c.right.textContent = st.connections ? st.connections + " 连接" : "";
+      c.fill.style.width = "0%";
+    } else {
+      c.title.textContent = "AI-IDM 下载中";
+      st.percent = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      st.at = Date.now();
+      st.running = true;
+      paint(c, st.at);              // 真值到达立刻对齐，不留旧帧
+      ensureTicker();
+    }
   }
 
-  function removeCard(tid) {
-    const c = cards.get(tid);
+  function finish(key, p, ok) {
+    if (dismissed.has(key)) return;   // 已屏蔽，终态也不重建卡
+    const c = cardFor(key);
+    const st = c.st;
+    st.running = false;
+    c.el.classList.remove("hide");
+    c.el.classList.toggle("done", ok);
+    c.el.classList.toggle("err", !ok);
+    clearTimeout(c.hideTimer);
+    c.title.textContent = ok ? "AI-IDM 下载完成" : "AI-IDM 下载失败";
+    c.name.textContent = ok ? (p.dest || p.name || p.url || "") : (p.error || "未知错误");
+    c.fill.style.width = "100%";
+    c.left.textContent = ok ? "100%" : "";
+    c.right.textContent = ok ? fmt(p.total) : "";
+    // 终态停留后从 DOM 移除（旧版只是隐藏，节点会一直留着）
+    c.hideTimer = setTimeout(() => removeCard(key), ok ? 6000 : 12000);
+  }
+
+  function removeCard(key) {
+    const c = cards.get(key);
     if (!c) return;
     clearTimeout(c.hideTimer);
-    c.card.remove();
-    cards.delete(tid);
+    c.el.remove();
+    cards.delete(key);
   }
 
-  /** n9：用户点 × —— 屏蔽该任务并立即移除卡片；该任务后续消息走 f3 被忽略。 */
-  function dismiss(tid) {
-    dismissed.add(tid);
-    removeCard(tid);
+  /** 用户点 × —— 屏蔽该任务并立即移除卡片；该任务后续消息一律忽略。 */
+  function dismiss(key) {
+    dismissed.add(key);
+    removeCard(key);
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
-    // 防御：缺任务 id 或 phase 未知的消息不建卡
-    if (!msg || msg.type !== "hud" || !msg.tid) return;
+    // 防御：缺 key 或 phase 未知的消息不建卡
+    const key = msg && (msg.key || msg.tid);
+    if (!msg || msg.type !== "hud" || !key) return;
     const p = msg.payload || {};
-    if (p.phase === "progress") show(msg.tid, p);
-    else if (p.phase === "done") finish(msg.tid, p, true);
-    else if (p.phase === "error") finish(msg.tid, p, false);
+    if (p.phase === "progress") show(key, p);
+    else if (p.phase === "done") finish(key, p, true);
+    else if (p.phase === "error") finish(key, p, false);
+    else if (p.phase === "gone") removeCard(key);   // 该标签页不再是显示目标：只移除，不屏蔽
   });
 })();

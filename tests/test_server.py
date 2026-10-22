@@ -214,6 +214,29 @@ def main():
                     {"panel": c12, "events": len(d13.get("events", [])),
                      "tasks": len(d14.get("tasks", []))}))
 
+    # ---- 9. /reveal：只肯开下载目录内的路径；测试里替换掉真正的文件管理器调用 ----
+    import ai_idm.server as srvmod
+    opened = []
+    orig_reveal = srvmod.reveal_in_file_manager
+
+    def fake_reveal(p):
+        opened.append(p)
+        return True, None
+
+    srvmod.reveal_in_file_manager = fake_reveal
+    try:
+        inside = os.path.join(dl_dir, "server-name.bin")
+        c15, d15 = call(base, "/reveal", {"path": inside}, token=token)
+        c16, _ = call(base, "/reveal", {"path": os.path.join(WORK, "outside.bin")}, token=token)
+        c17, _ = call(base, "/reveal", {"path": inside})              # 无令牌
+        c18, _ = call(base, "/reveal", {}, token=token)               # 缺 path
+    finally:
+        srvmod.reveal_in_file_manager = orig_reveal
+    results.append(("reveal", c15 == 200 and d15.get("ok") is True and c16 == 403
+                    and c17 == 401 and c18 == 400 and len(opened) == 1,
+                    {"inside": c15, "outside": c16, "no_token": c17,
+                     "no_path": c18, "opened": len(opened)}))
+
     print("\n=== 结果 ===")
     allok = True
     for name, ok, detail in results:

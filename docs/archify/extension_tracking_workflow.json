@@ -20,9 +20,9 @@
   },
   "nodes": [
     { "id": "n1", "kind": "start", "label": "任务已转交", "note": "send() 成功：POST /add 返回 tid（服务端去重命中时返回既有 tid）" },
-    { "id": "n2", "kind": "step", "label": "登记跟踪", "note": "PENDING.set(tid,{url,tabId,name})；tabId 缺失时取当前活动标签页；启动 1.5s 轮询定时器（现状保持）" },
+    { "id": "n2", "kind": "step", "label": "登记跟踪", "note": "PENDING.set(tid,{url,tabId,name,key})；tabId 缺失时取当前活动标签页；启动 0.5s 轮询定时器（1.9.1 起，此前 1.5s）" },
     { "id": "n3", "kind": "step", "label": "持久化快照", "note": "本批新增：把 PENDING 全量写入 chrome.storage.session（浏览器会话内存活，SW 被杀后可恢复）" },
-    { "id": "n4", "kind": "step", "label": "轮询 /status", "note": "仅在有跟踪任务时轮询；按上一采样计算瞬时速度（现状保持）" },
+    { "id": "n4", "kind": "step", "label": "轮询 /status", "note": "仅在有跟踪任务时轮询（1.10.0 起 0.5s），pollBusy 防重入；按上一采样计算瞬时速度。任务在 /status 里消失且列表未被截断（<100 条）→ 连续两轮缺失即停止跟踪并提示「任务已被移除」" },
     { "id": "n5", "kind": "decision", "label": "任务状态判定", "note": "按服务端 /status 的 t.status 分支" },
     { "id": "n6", "kind": "step", "label": "进行中 → HUD 进度", "note": "区分 排队中 / 连接中 / 百分比+速度（1.2.1 行为保持）" },
     { "id": "n7", "kind": "step", "label": "终态 → 结果呈现", "note": "done：HUD 完成 + 系统通知 + 徽标 ✓；error/cancelled：HUD 失败 + 通知 + 徽标 !" },

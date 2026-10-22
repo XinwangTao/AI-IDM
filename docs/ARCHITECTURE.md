@@ -128,11 +128,12 @@ extension  ──POST /add──▶  server.Handler ──▶ Queue (SQLite) ─
 ```
 
 `server.py` is a `ThreadingHTTPServer` bound to loopback. Every request that can *cause* something
-(`/add`, `/cancel`, `/remove`) or *reveal* something (`/status`, `/events`, `/config`) requires the
+(`/add`, `/cancel`, `/remove`, `/reveal`) or *reveal* something (`/status`, `/events`, `/config`)
+requires the
 `X-AI-IDM-Token` header (or `?token=`), compared with `hmac.compare_digest`. `/ping` is open so the
 extension can tell "service down" (leave the browser download alone) from "service up" (take over).
 
-Two design consequences worth noting:
+Three design consequences worth noting:
 
 - **Destination resolution.** The extension only knows the URL, so `Download` gained `dest_dir`:
   when no explicit path is given, the engine probes first and writes the `Content-Disposition`
@@ -140,6 +141,22 @@ Two design consequences worth noting:
 - **Cancellation.** `Download.run()` returns a snapshot with `status="cancelled"` rather than
   raising, so `Runner` keeps a `tid → Download` registry and translates that into a queue row
   update; without it a cancelled task used to be recorded as `done`.
+- **Opening the file manager.** The extension cannot open an arbitrary folder itself (its only API
+  is `downloads.showDefaultFolder()`, which targets the browser's own directory), so the completion
+  path calls `POST /reveal`. That endpoint shells out (`open -R` on macOS, `xdg-open` elsewhere)
+  only for paths whose `realpath` stays inside `download_dir` — a leaked token must not turn the
+  service into an arbitrary-path opener. On Windows the file path goes through
+  `SHOpenFolderAndSelectItems` first: the shell reuses an existing window (or tab) already showing
+  that folder and selects the item instead of stacking a new window per download; if the API fails
+  the service falls back to spawning `explorer /select,<path>`. The child process is spawned and
+  never awaited: `explorer.exe` returns non-zero even when it succeeds. Reuse leaves no "new
+  handle" to identify, so a short-lived thread then locates the window by title (folder name, or
+  the drive letter for a root directory) and raises it — `SetForegroundWindow`, then the
+  `AttachThreadInput` variant, then `SwitchToThisWindow`, falling back to a z-order bump plus a
+  taskbar flash — because a background service is denied foreground rights and the window would
+  otherwise open behind everything. This step only succeeds when the service runs **non-elevated**:
+  an elevated process cannot attach to / steal focus from the medium-integrity desktop (UIPI), so
+  it degrades to the taskbar flash.
 
 HLS jobs from `/add` stay in memory (`hls-…` ids) because the HLS downloader has no resumable
 state file to reconcile with the queue on restart.

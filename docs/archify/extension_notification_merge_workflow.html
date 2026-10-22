@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Archify · extension_notification_merge</title>
+<style>
+  body { font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f6f7f9; color: #1f2430; }
+  header { padding: 18px 28px; background: #1f2430; color: #fff; }
+  header h1 { margin: 0; font-size: 18px; }
+  header .meta { opacity: .75; font-size: 12.5px; margin-top: 4px; }
+  .banner { padding: 10px 28px; background: #fff7ed; border-bottom: 1px solid #fed7aa; color: #9a3412; font-weight: 600; }
+  main { max-width: 1060px; margin: 0 auto; padding: 20px 28px 60px; }
+  h2 { font-size: 15px; margin: 30px 0 12px; }
+  .lanes { display: flex; gap: 36px; align-items: flex-start; flex-wrap: wrap; }
+  .col { flex: 1 1 420px; }
+  .col h3 { font-size: 13px; color: #475569; margin: 0 0 10px; }
+  .node { border: 1.5px solid #2563eb; background: #fff; border-radius: 10px; padding: 9px 14px; max-width: 460px; }
+  .node .id { font-size: 11px; color: #94a3b8; font-weight: 700; }
+  .node .label { font-weight: 600; }
+  .node .note { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .start { border-color: #16a34a; }
+  .decision { border-style: dashed; border-color: #d97706; }
+  .end { border-color: #334155; }
+  .new2 { box-shadow: 0 0 0 2.5px #ddd6fe; }
+  .fallback { border-style: dashed; border-color: #94a3b8; background: #f8fafc; }
+  .fallback .label, .fallback .note { color: #475569; }
+  .arrow { color: #475569; margin: 4px 0 4px 22px; font-size: 13px; }
+  .arrow small { color: #94a3b8; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 12.5px; }
+  th, td { border: 1px solid #e2e8f0; padding: 5px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; }
+  tr.v2 td { background: #faf5ff; }
+  code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Archify · 通知合并与弹窗列表完善</h1>
+  <div class="meta">name: extension_notification_merge · kind: workflow · 创建: 2026-10-22 · 主路径 6 + 出口 3 = 9 节点（≤12 合规）· 旁路 JSON: extension_notification_merge_workflow.json · 衔接：extension_download_ux（浮层/徽标）</div>
+</header>
+<div class="banner">状态：已确认并实施（L1-D，2026-10-22，扩展 1.10.1）—— 接管阶段的「已交给」通知已删除；完成通知带总大小；弹窗列表不再截断。</div>
+<main>
+
+<h2>批次范围</h2>
+<ul>
+  <li><b>动机</b>：同一个事件现在会响两次（接管时「已交给 AI-IDM 下载」+ 完成时「AI-IDM 下载完成」），再加上页面浮层，等于说三遍。接管那条没有额外信息量，浮层已经即时显示「正在接管 → 排队」。</li>
+  <li><b>In</b>：
+    <ul>
+      <li><code>background.js</code>：删除接管成功的 <code>notify()</code>；完成通知正文补文件大小（<code>总大小 · 落盘路径</code>）；失败/回退通知保持不变。</li>
+      <li><code>popup.js</code>：任务列表从「最多 8 条」改为展示全部（容器已有 <code>max-height:250px; overflow:auto</code>）。</li>
+    </ul>
+  </li>
+  <li><b>Out</b>：通知开关语义（<code>notify=false</code> 仍一键全关）；浮层/徽标/打开文件夹；服务端。</li>
+</ul>
+
+<div class="lanes">
+  <div class="col">
+    <h3>主路径</h3>
+    <div class="node start"><div class="id">n1 · start</div><div class="label">提交成功</div><div class="note"><code>POST /add</code> 返回 tid，HUD 卡已从「正在接管」转「排队中」</div></div>
+    <div class="arrow">↓</div>
+    <div class="node new2"><div class="id">n2 · step（本批删除）</div><div class="label">不再发「已交给」通知</div><div class="note">接管阶段只靠页面浮层反馈；系统通知留到终态</div></div>
+    <div class="arrow">↓</div>
+    <div class="node"><div class="id">n3 · step</div><div class="label">跟踪与进度</div><div class="note">0.5s 轮询 → 浮层插值（现状不变）</div></div>
+    <div class="arrow">↓</div>
+    <div class="node decision"><div class="id">n4 · decision</div><div class="label">终态判定</div><div class="note">done / error（cancelled 按 error 处理，现状）</div></div>
+    <div class="arrow">↓ <small>notify 开</small></div>
+    <div class="node new2"><div class="id">n5 · step（改写）</div><div class="label">一条终态通知</div><div class="note">完成：<code>下载完成</code>，正文 <code>总大小 · 落盘路径</code>；失败：<code>下载失败</code>，正文 <code>错误 · URL</code>（现状）</div></div>
+    <div class="arrow">↓</div>
+    <div class="node end"><div class="id">n6 · end</div><div class="label">收尾</div><div class="note">HUD 终态卡 6s/12s、徽标 ✓/!、自动打开文件夹（现状不变）</div></div>
+  </div>
+
+  <div class="col">
+    <h3>出口</h3>
+    <div class="node fallback"><div class="id">f1 · fallback</div><div class="label">notify 关闭</div><div class="note">完成/失败都不弹系统通知，只留浮层与徽标（现状语义）</div></div>
+    <p></p>
+    <div class="node fallback"><div class="id">f2 · fallback</div><div class="label">提交失败 → 交回浏览器</div><div class="note">保留「接管失败，已交回浏览器」通知（这条有实际后果，不能省）</div></div>
+    <p></p>
+    <div class="node fallback"><div class="id">f3 · fallback</div><div class="label">弹窗任务很多</div><div class="note">列表展示全部任务，超出 250px 由容器滚动；不再截断到 8 条</div></div>
+  </div>
+</div>
+
+<h2>边表（与旁路 JSON 一致）</h2>
+<table>
+  <tr><th>从</th><th>到</th><th>条件/标签</th></tr>
+  <tr class="v2"><td>n1</td><td>n2</td><td></td></tr>
+  <tr class="v2"><td>n2</td><td>n3</td><td></td></tr>
+  <tr class="v2"><td>n3</td><td>n4</td><td>轮询到终态</td></tr>
+  <tr class="v2"><td>n4</td><td>n5</td><td>notify 开</td></tr>
+  <tr class="v2"><td>n4</td><td>f1</td><td>notify 关</td></tr>
+  <tr class="v2"><td>n5</td><td>n6</td><td></td></tr>
+  <tr><td>f1</td><td>n6</td><td></td></tr>
+  <tr><td>f2</td><td>n6</td><td>提交失败路径</td></tr>
+  <tr><td>f3</td><td>n6</td><td>列表渲染（任意时刻）</td></tr>
+</table>
+
+<h2>改动 → 节点/边（交付时按此对照）</h2>
+<table>
+  <tr><th>文件</th><th>改动</th><th>节点/边</th></tr>
+  <tr><td><code>browser-extension/background.js</code></td><td>删除接管成功通知；完成通知正文加总大小</td><td>n2 / n5 / f1 / f2</td></tr>
+  <tr><td><code>browser-extension/popup.js</code></td><td>去掉 <code>slice(0, 8)</code></td><td>f3</td></tr>
+</table>
+
+<h2>待确认的 2 个问题</h2>
+<ul>
+  <li><b>Q1</b>：接管时的「已交给 AI-IDM 下载」通知直接删掉（浮层已覆盖这段时间），可以吗？</li>
+  <li><b>Q2</b>：完成通知正文改成「总大小 · 落盘路径」，失败通知保持不变，可以吗？</li>
+</ul>
+<h2>确认结论与验证（2026-10-22）</h2>
+<ul>
+  <li>Q1：删除接管时的「已交给」通知。Q2：完成通知正文 = 总大小 · 落盘路径。</li>
+  <li>弹窗任务列表去掉 8 条上限，容器内滚动。</li>
+  <li>验证：<code>node --check</code> 通过；<code>ext_smoke.js</code> 的消息流断言仍然全过（完成通知标题不变，正文新增大小）；仓库 / Edge 加载目录 / zip 三处哈希一致。</li>
+</ul>
+</main>
+</body>
+</html>

@@ -123,7 +123,9 @@ ai-idm serve
 
 Three entry points: **auto** (cancel the browser download and hand the URL over — restored to the
 browser on any failure), **context menu** (link / media / page) and **popup** (current tab plus live
-progress). Cookies and Referer are forwarded, so logged-in downloads work.
+progress). Cookies and Referer are forwarded, so logged-in downloads work. When a download finishes,
+the extension pops the file manager with the file selected (since 1.9.0; at most one window per
+folder every 2 s, toggleable in the options page).
 
 Any script can drive the same local API:
 

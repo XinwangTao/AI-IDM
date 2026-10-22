@@ -1,0 +1,63 @@
+{
+  "name": "extension_hud_crosstab_and_reveal_reuse",
+  "title": "浮层跨标签页 + 打开文件夹复用窗口",
+  "kind": "workflow",
+  "status": "已确认并实施（L1-D，2026-10-22，扩展 1.11.0 / 服务 1.14.0）",
+  "created": "2026-10-22",
+  "depends_on": ["extension_download_ux", "extension_open_folder_workflow"],
+  "batch": {
+    "in_scope": [
+      "background.js：进度同时推到「发起标签页」和「当前活动标签页」，其余标签页的卡发 gone 移除；页签关闭时清理记录",
+      "content.js：新增 phase=gone（只移除卡片，不加入 dismissed）",
+      "server.py：Windows 下改用 SHOpenFolderAndSelectItems 复用已有资源管理器窗口并选中文件；按标题定位该窗口后置顶；API 失败回退出新窗口",
+      "server.py：目录场景保持直接打开"
+    ],
+    "out_of_scope": [
+      "浮层视觉与文案",
+      "通知策略（1.10.1 已定稿）",
+      "下载引擎/队列",
+      "macOS/Linux 行为（不变）"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "轮询到进度", "note": "0.5s /status；每个任务计算目标标签页 = {发起标签页, 当前活动标签页}" },
+    { "id": "n2", "kind": "step", "label": "推送进度到目标标签页", "note": "同一 key 推给每个目标页；记录 key→tabs" },
+    { "id": "n3", "kind": "step", "label": "清理非目标页", "note": "之前有卡、这次不在目标里的标签页 → 发 phase=gone（只移除，不屏蔽）" },
+    { "id": "n4", "kind": "step", "label": "终态广播", "note": "done/error 发给所有持卡标签页，然后删除 key→tabs" },
+    { "id": "n5", "kind": "step", "label": "下载完成触发打开", "note": "扩展 POST /reveal（现状）" },
+    { "id": "n6", "kind": "step", "label": "复用窗口选中文件", "note": "SHOpenFolderAndSelectItems：已有该文件夹窗口则复用，没有则新建" },
+    { "id": "n7", "kind": "step", "label": "定位并置顶", "note": "先找新窗口；没有新窗口就按标题（文件夹名 / 盘符）找既有窗口 → SetForegroundWindow/AttachThreadInput/SwitchToThisWindow → z 序兜底" },
+    { "id": "n8", "kind": "end", "label": "收尾", "note": "HUD 终态、徽标、通知（现状）" },
+    { "id": "f1", "kind": "fallback", "label": "页签关闭", "note": "tabs.onRemoved：从所有 key→tabs 里移除该页，不报错" },
+    { "id": "f2", "kind": "fallback", "label": "Shell API 失败", "note": "回退 explorer /select 新窗口 + 原有的置顶/闪任务栏逻辑" },
+    { "id": "f3", "kind": "fallback", "label": "无图形会话", "note": "置顶失败静默；文件已下载完成（现状）" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4", "label": "任务终态" },
+    { "from": "n4", "to": "n8" },
+    { "from": "n5", "to": "n6" },
+    { "from": "n6", "to": "n7" },
+    { "from": "n7", "to": "n8" },
+    { "from": "n6", "to": "f2", "label": "API 失败" },
+    { "from": "f2", "to": "n7" },
+    { "from": "n7", "to": "f3", "label": "置顶失败" },
+    { "from": "f3", "to": "n8" },
+    { "from": "f1", "to": "n2", "label": "清理后继续" }
+  ],
+  "mapping": [
+    { "file": "browser-extension/background.js", "change": "目标页计算、key→tabs、gone 清理、终态广播、tabs.onRemoved", "nodes": ["n1", "n2", "n3", "n4", "f1"] },
+    { "file": "browser-extension/content.js", "change": "phase=gone 移除卡片", "nodes": ["n3"] },
+    { "file": "ai_idm/server.py", "change": "SHOpenFolderAndSelectItems + 标题定位 + 置顶；失败回退", "nodes": ["n6", "n7", "f2", "f3"] }
+  ],
+  "open_questions": [],
+  "verification": [
+    "ext_smoke.js 16/16（跨标签页目标页计算 / gone 清理 / 终态广播断言）",
+    "content_smoke.js 10/10（phase=gone 只移除卡片不屏蔽）",
+    "node --check background.js content.js popup.js 通过",
+    "抗干扰验收（F:/cache/temp/reveal_verify_final.py）：专属测试目录内 reveal 两次 → 同一 hwnd 窗口、focused 从 a1.txt 切到 a2.txt、无新窗口、窗口到达前台；测试后清理窗口与目录",
+    "盘根修复后 F:/ 根目录 reveal：0.1s 内到达前台（修复前 z 序纹丝不动）",
+    "tests/run_all.py 通过；仓库 / Edge 加载目录 / zip 哈希一致"
+  ]
+}

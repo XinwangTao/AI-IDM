@@ -14,6 +14,7 @@ const DEFAULTS = {
   mode: "auto",          // auto=自动接管 | manual=只用右键/按钮 | off=完全关闭
   forwardCookies: true,  // 带上 Cookie，会员站/登录站才下得动
   notify: true,
+  openFolder: true,      // 下载完成后弹出资源管理器并选中文件（由本地服务代开）
 };
 
 // 回环地址（任意端口）都不接管：服务/面板经回环触发的下载必须豁免（服务改端口后
@@ -93,6 +94,16 @@ function basename(p) {
   return s || undefined;
 }
 
+/** 字节数 → "12.3 MB"。完成通知里用，和浮层保持同一套单位。 */
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (!n) return "";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let v = n, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? Math.round(v) : v.toFixed(1)) + u[i];
+}
+
 async function cookieHeader(url, c) {
   if (!c.forwardCookies) return "";
   try {
@@ -114,15 +125,44 @@ function notify(title, message) {
   } catch (_) { /* 通知权限被拒也不影响主流程 */ }
 }
 
+// ---------------------------------------------------------------- 完成后打开文件夹
+//
+// 扩展自己没有「打开任意文件夹」的 API（chrome.downloads.showDefaultFolder 只认浏览器
+// 自己的下载目录），所以请本地服务代开：POST /reveal。服务只肯开 download_dir 内的路径。
+// 纯锦上添花：开关关、服务拒绝、系统开不了，都静默跳过，不影响下载结果和 ✓ 徽标。
+
+const REVEAL_MERGE_MS = 2000;        // 同一目录这段时间内只开一次窗口：批量完成不弹一堆资源管理器
+let lastReveal = { dir: "", at: 0 };
+
+async function maybeReveal(dest) {
+  if (!dest) return;
+  const c = await cfg();
+  if (!c.openFolder) return;
+  const dir = String(dest).replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+  const now = Date.now();
+  if (dir && dir === lastReveal.dir && now - lastReveal.at < REVEAL_MERGE_MS) return;
+  lastReveal = { dir, at: now };
+  try {
+    await api("/reveal", { method: "POST", body: { path: dest }, timeout: 3000 });
+  } catch (_) { /* 打开失败不影响已完成的事实 */ }
+}
+
 let badgeHoldUntil = 0;          // ✓ / ! 徽标的保留截止：服务瞬断时不被立刻抹掉
 
-async function bumpBadge() {
+async function bumpBadge(pre) {
   try {
-    const d = await api("/status", { timeout: 2500 });
+    const d = pre || await api("/status", { timeout: 2500 });
     const active = (d.tasks || []).filter(
-      (t) => t.status === "pending" || t.status === "running").length;
+      (t) => t.status === "pending" || t.status === "running");
     await chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
-    await chrome.action.setBadgeText({ text: active ? String(active) : "" });
+    let text = "";
+    if (active.length === 1) {
+      // 单个任务直接显示百分比：不打开弹窗也能看出进度
+      text = String(Math.max(0, Math.min(100, Math.round(active[0].percent || 0))));
+    } else if (active.length > 1) {
+      text = String(active.length);
+    }
+    await chrome.action.setBadgeText({ text });
   } catch (_) {
     if (Date.now() > badgeHoldUntil) await chrome.action.setBadgeText({ text: "" });
   }
@@ -131,6 +171,8 @@ async function bumpBadge() {
 /** 正在跟踪的服务端任务：tid -> {url, tabId, name}。用于页面浮层 + 完成通知。 */
 const PENDING = new Map();
 const LAST = new Map();          // tid -> {t, d}，用来算瞬时速度
+const CARD_TABS = new Map();     // key -> Set<tabId>：哪些标签页上已经有这张卡
+const POLL_MS = 500;             // 跟踪轮询：0.5s，配合页面端插值才不会一跳一跳
 let pollTimer = null;
 
 // ---------------------------------------------------------------- 跟踪状态持久化（跨 SW 重启）
@@ -161,7 +203,7 @@ function ensureRestored() {
           await persistPending();     // 合并后全量写回，收敛 storage
         }
       } catch (_) { /* 读不到就当没有 */ }
-      if (PENDING.size && !pollTimer) pollTimer = setInterval(pollOnce, 1500);
+      if (PENDING.size && !pollTimer) pollTimer = setInterval(pollOnce, POLL_MS);
     })();
   }
   return restorePromise;
@@ -174,10 +216,13 @@ function forget(tid) {
   persistPending();
 }
 
-function hud(tid, tabId, payload) {
-  if (!tabId) return;
+function hud(key, tabId, payload) {
+  if (!tabId || !key) return;
+  let holders = CARD_TABS.get(key);
+  if (!holders) CARD_TABS.set(key, holders = new Set());
+  holders.add(tabId);
   const push = () => chrome.tabs.sendMessage(
-    tabId, { type: "hud", tid, payload }, () => void chrome.runtime.lastError);
+    tabId, { type: "hud", key, payload }, () => void chrome.runtime.lastError);
 
   // 扩展重载前就开着的标签页没有 content script：按需注入一次（脚本自身有幂等保护）
   let injected = false;
@@ -193,10 +238,44 @@ function hud(tid, tabId, payload) {
   };
 
   try {
-    chrome.tabs.sendMessage(tabId, { type: "hud", tid, payload }, () => {
+    chrome.tabs.sendMessage(tabId, { type: "hud", key, payload }, () => {
       if (chrome.runtime.lastError) ensure();
     });
   } catch (_) { ensure(); }
+}
+
+/** 让某个标签页移除这张卡（不加入 dismissed）：切走标签页时用。 */
+function hudGone(key, tabId) {
+  try {
+    chrome.tabs.sendMessage(tabId, { type: "hud", key, payload: { phase: "gone" } },
+                            () => void chrome.runtime.lastError);
+  } catch (_) { /* 标签页已关 */ }
+  const holders = CARD_TABS.get(key);
+  if (holders) {
+    holders.delete(tabId);
+    if (!holders.size) CARD_TABS.delete(key);
+  }
+}
+
+/** 进度只发给「发起页 + 当前活动页」，其余持有旧卡的页发 gone 收掉。 */
+function pushProgress(key, meta, payload, activeId) {
+  const targets = new Set();
+  if (meta.tabId) targets.add(meta.tabId);
+  if (activeId) targets.add(activeId);
+  for (const tabId of targets) hud(key, tabId, payload);
+  const holders = CARD_TABS.get(key);
+  if (!holders) return;
+  for (const tabId of [...holders]) {
+    if (!targets.has(tabId)) hudGone(key, tabId);
+  }
+}
+
+/** 终态发给所有持有该卡的标签页；一张都没有就发给当前活动页。 */
+function broadcastFinal(key, activeId, payload) {
+  const holders = CARD_TABS.get(key);
+  const targets = holders && holders.size ? [...holders] : (activeId ? [activeId] : []);
+  for (const tabId of targets) hud(key, tabId, payload);
+  CARD_TABS.delete(key);
 }
 
 function speedOf(tid, downloaded) {
@@ -209,7 +288,7 @@ function speedOf(tid, downloaded) {
   return Math.max(0, ((downloaded || 0) - prev.d) / dt);
 }
 
-async function pollOnce() {
+async function pollOnceNow() {
   await ensureRestored();   // SW 重启后的第一次轮询：先把上一个实例留下的任务并回来
   if (!PENDING.size) {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -217,31 +296,56 @@ async function pollOnce() {
   }
   try {
     const d = await api("/status", { timeout: 4000 });
-    const byId = new Map((d.tasks || []).map((t) => [t.id, t]));
+    const tasks = d.tasks || [];
+    // /status 默认 limit=100：只有列表没被截断时，"看不到的任务"才能断定是真的没了
+    const truncated = tasks.length >= 100;
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    let activeId = null;
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      activeId = tab && tab.id;
+    } catch (_) { /* 取不到活动页就只发发起页 */ }
+    let dirty = false;
     for (const [tid, meta] of [...PENDING.entries()]) {
+      const key = meta.key || tid;
       const t = byId.get(tid);
-      if (!t) continue;
+      if (!t) {
+        // 任务被弹窗「移除」或保留期清理掉了：不清的话 PENDING 永不为空，0.5s 轮询停不下来
+        if (!truncated) {
+          meta.miss = (meta.miss || 0) + 1;
+          dirty = true;
+          if (meta.miss >= 2) {          // 连续两轮都看不到才收尾，容忍一次抖动
+            forget(tid);
+            broadcastFinal(key, activeId, { phase: "error", error: "任务已被移除" });
+          }
+        }
+        continue;
+      }
+      if (meta.miss) { delete meta.miss; dirty = true; }
       if (t.status === "pending" || t.status === "running") {
-        hud(tid, meta.tabId, {
+        pushProgress(key, meta, {
           phase: "progress",
           queued: t.status === "pending",              // 排队中（还没轮到）
           connecting: t.status === "running" && !t.total, // 已开跑但还没探到大小
           percent: t.percent,
           total: t.total,
           speed: speedOf(tid, t.downloaded),
+          connections: t.connections,                  // /status 行里带连接数
           name: meta.name || basename(t.dest) || t.url,
-        });
+        }, activeId);
       } else if (t.status === "done") {
         forget(tid);
-        hud(tid, meta.tabId, { phase: "done", dest: t.dest, total: t.total });
-        notify("AI-IDM 下载完成", t.dest || t.url);
+        broadcastFinal(key, activeId, { phase: "done", dest: t.dest, total: t.total });
+        notify("AI-IDM 下载完成",
+               [fmtSize(t.total), t.dest || t.url].filter(Boolean).join(" · "));
+        maybeReveal(t.dest);          // 弹出资源管理器并选中文件（失败静默）
         chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
         chrome.action.setBadgeText({ text: "✓" });
         badgeHoldUntil = Date.now() + 6000;
         setTimeout(() => bumpBadge(), 6000);
       } else if (t.status === "error" || t.status === "cancelled") {
         forget(tid);
-        hud(tid, meta.tabId, { phase: "error", error: t.error || t.status });
+        broadcastFinal(key, activeId, { phase: "error", error: t.error || t.status });
         notify("AI-IDM 下载失败", `${t.error || t.status}\n${t.url || ""}`);
         chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
         chrome.action.setBadgeText({ text: "!" });
@@ -249,13 +353,28 @@ async function pollOnce() {
         setTimeout(() => bumpBadge(), 6000);
       }
     }
+    // miss 计数变更要写回快照，否则 SW 重启后又从 0 数起
+    if (dirty) persistPending();
     // 只有还有未完成任务时才刷新计数，否则会把刚设的 ✓ / ! 覆盖掉
-    if (PENDING.size) await bumpBadge();
+    // 复用这一轮已经拿到的 /status，别再发一次请求（0.5s 轮询下很浪费）
+    if (PENDING.size) await bumpBadge(d);
     if (!PENDING.size && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   } catch (_) { /* 服务暂时不可达，下一轮再试 */ }
 }
 
-async function track(tid, url, tabId, name) {
+let pollBusy = false;
+/** 防重入：0.5s 定时器 + 30s 告警叠加时，慢 /status 的旧响应可能后到并覆盖新进度。 */
+async function pollOnce() {
+  if (pollBusy) return;
+  pollBusy = true;
+  try {
+    await pollOnceNow();
+  } finally {
+    pollBusy = false;
+  }
+}
+
+async function track(tid, url, tabId, name, key) {
   if (!tid) return;
   await ensureRestored();    // 先并回上个 SW 实例留下的任务，快照才完整
   if (!tabId) {
@@ -264,10 +383,16 @@ async function track(tid, url, tabId, name) {
       tabId = t && t.id;
     } catch (_) { /* ignore */ }
   }
-  PENDING.set(tid, { url, tabId, name });
+  // 服务端去重（dedup_add）会把同一 URL 返回成既有 tid；若该 tid 已在跟踪，
+  // 先给旧卡一个终态再接管 key，否则旧卡永远收不到 done/error，页面 200ms 插值也停不下来。
+  const prev = PENDING.get(tid);
+  if (prev && prev.key && prev.key !== key) {
+    hud(prev.key, prev.tabId, { phase: "error", error: "该链接已在下载队列中，进度见新卡片" });
+  }
+  PENDING.set(tid, { url, tabId, name, key });
   persistPending();
-  hud(tid, tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
-  if (!pollTimer) pollTimer = setInterval(pollOnce, 1500);
+  hud(key || tid, tabId, { phase: "progress", queued: true, percent: 0, total: 0, speed: 0, name: name || url });
+  if (!pollTimer) pollTimer = setInterval(pollOnce, POLL_MS);
 }
 
 /** 把 URL 交给本地服务；失败抛异常由调用方决定是否回退浏览器。 */
@@ -279,15 +404,30 @@ async function send(url, extra = {}, tabId = null) {
     const ck = await cookieHeader(url, c);
     if (ck) payload.cookie = ck;
   }
-  const data = await api("/add", { method: "POST", body: payload, timeout: 8000 });
-  await bumpBadge();
-  const name = basename(payload.filename) || data.dest || url;
-  await track(data.id, url, tabId, name);
-  if (c.notify) {
-    const conns = data.connections ? `${data.connections} 连接` : "多连接";
-    notify("已交给 AI-IDM 下载", `${conns}，完成后会再提示`);
+  if (!tabId) {
+    try {
+      const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      tabId = t && t.id;
+    } catch (_) { /* ignore */ }
   }
-  return data;
+  // 浏览器自己的下载项已被取消/即将消失，先把卡推出去，别留空档。
+  // key 在提交前生成，/add 回来后沿用同一张卡——不换卡、不闪跳。
+  const key = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const name = basename(payload.filename) || url;
+  hud(key, tabId, { phase: "progress", handoff: true, percent: 0, total: 0, speed: 0, name });
+  try {
+    const data = await api("/add", { method: "POST", body: payload, timeout: 8000 });
+    await bumpBadge();
+    const realName = basename(payload.filename) || basename(data.dest) || url;
+    await track(data.id, url, tabId, realName, key);
+    // 接管阶段不再单独弹通知：浮层已经从「正在接管」走到「排队中」，
+    // 再弹一条「已交给」是同一个事件说两遍（1.10.1 合并通知）。
+    return data;
+  } catch (e) {
+    // 卡片不能停在「正在接管」：把 key 交给调用方，按失败方式收尾
+    if (e && typeof e === "object") { e.hudKey = key; e.hudTab = tabId; }
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------- 右键菜单
@@ -324,6 +464,14 @@ chrome.alarms.onAlarm.addListener((a) => {
   }
 });
 
+// 标签页关掉后，别让 CARD_TABS 里留着死页签（否则每次轮询都白发一次 gone）
+chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const [key, holders] of [...CARD_TABS.entries()]) {
+    holders.delete(tabId);
+    if (!holders.size) CARD_TABS.delete(key);
+  }
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const c = await cfg();
   if (c.mode === "off") {
@@ -335,6 +483,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
     await send(url, { referer: tab && tab.url, source: "menu" }, tab && tab.id);
   } catch (e) {
+    if (e && e.hudKey) {
+      hud(e.hudKey, e.hudTab, { phase: "error", error: `加入失败：${e.message || e}` });
+    }
     notify("加入 AI-IDM 失败", String(e.message || e));
   }
 });
@@ -384,6 +535,9 @@ chrome.downloads.onCreated.addListener(async (item) => {
         conflictAction: "uniquify",
       });
     } catch (_) { /* 浏览器也不再接受，只能提示 */ }
+    if (e && e.hudKey) {
+      hud(e.hudKey, e.hudTab, { phase: "error", error: "接管失败，已交回浏览器" });
+    }
     notify("AI-IDM 接管失败，已交回浏览器", String(e.message || e));
   }
 });
@@ -395,7 +549,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === "add") {
     send(msg.url, { referer: msg.referer, filename: msg.filename, source: "popup" })
       .then((r) => reply({ ok: true, ...r }))
-      .catch((e) => reply({ ok: false, error: String(e.message || e) }));
+      .catch((e) => {
+        if (e && e.hudKey) {
+          hud(e.hudKey, e.hudTab, { phase: "error", error: `加入失败：${e.message || e}` });
+        }
+        reply({ ok: false, error: String(e.message || e) });
+      });
     return true;
   }
   if (msg.type === "ping") {

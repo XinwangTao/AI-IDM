@@ -1,0 +1,65 @@
+{
+  "name": "extension_download_ux",
+  "title": "接管与状态显示「丝滑」化",
+  "kind": "workflow",
+  "status": "已确认并实施（L1-D，2026-10-22，扩展 1.10.0）",
+  "created": "2026-10-22",
+  "depends_on": ["extension_takeover_gate_workflow", "extension_tracking_workflow"],
+  "batch": {
+    "in_scope": [
+      "background.js：HUD 使用客户端 key，提交前先推「正在接管」卡片，/add 返回后沿用同一 key",
+      "background.js：跟踪轮询 1.5s → 0.5s",
+      "background.js：徽标单活跃任务显示百分比，多任务显示数量",
+      "background.js：接管失败时同一张卡改为「已交回浏览器」，6s 后移除",
+      "content.js：按 key 建卡；百分比按速度插值（200ms），显示 ETA / 速度 / 连接数",
+      "popup.js：按任务 id 增量更新行，刷新 800ms，不再整表重写"
+    ],
+    "out_of_scope": [
+      "ai_idm/* 服务端任何改动",
+      "通知策略与文案（仍是「已交给」+「完成」两条）",
+      "接管门禁（回环/更新包/Edge 域名判定）",
+      "打开文件夹（1.9.0 已交付）",
+      "取消/移除接口语义"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "下载被发起", "note": "自动接管（onCreated 过门禁）、右键菜单、弹窗按钮三条入口汇合" },
+    { "id": "n2", "kind": "step", "label": "立即反馈「正在接管」", "note": "本批新增：提交前生成客户端 key 并先推 HUD（标题「正在接管…」+ 文件名），不再等 /add 返回" },
+    { "id": "n3", "kind": "step", "label": "提交 /add", "note": "现状保持：referer / cookie / filename，超时 8s" },
+    { "id": "n4", "kind": "step", "label": "入列跟踪（沿用同一 key）", "note": "本批改写：tid 进 PENDING，key 一并存入 meta，HUD 继续用同一张卡，状态转「排队中」" },
+    { "id": "n5", "kind": "step", "label": "平滑进度", "note": "本批改写：服务端轮询 0.5s；页面按上次速度插值（200ms，真值到达即对齐，封顶 99%）；显示速度 / 已完成与总量 / 剩余时间 / 连接数" },
+    { "id": "n6", "kind": "step", "label": "终态收尾", "note": "完成卡 6s、失败卡 12s 后移除；系统通知与 ✓ / ! 徽标现状保持；完成仍自动打开文件夹" },
+    { "id": "n7", "kind": "step", "label": "徽标与弹窗状态", "note": "本批改写：徽标仅 1 个活跃任务时显示百分比数字，≥2 个显示数量；弹窗按 id 增量更新行，800ms 刷新" },
+    { "id": "n8", "kind": "end", "label": "全部结束", "note": "PENDING 空 → 停轮询；徽标回到 6s 后的清空逻辑（现状）" },
+    { "id": "f1", "kind": "fallback", "label": "服务离线 / 门禁不过", "note": "现状保持：不接管、不动浏览器下载，也不推 HUD" },
+    { "id": "f2", "kind": "fallback", "label": "提交失败 → 交回浏览器", "note": "重新 downloads.download + 「接管失败，已交回浏览器」通知；本批新增：同一张卡改为「已交回浏览器」并 6s 后移除" },
+    { "id": "f3", "kind": "fallback", "label": "轮询失败", "note": "保留任务与定时器，下一轮再试；插值无新真值时最多外推 2s 后冻结" },
+    { "id": "f4", "kind": "fallback", "label": "用户点 × 关闭", "note": "任务加入 dismissed，后续消息一律忽略；下载本身不受影响" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2", "label": "门禁通过（f1 除外）" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4", "label": "/add 成功，返回 tid" },
+    { "from": "n3", "to": "f2", "label": "网络/服务错误" },
+    { "from": "n4", "to": "n5", "label": "进入轮询" },
+    { "from": "n5", "to": "n5", "label": "下一轮（0.5s）" },
+    { "from": "n5", "to": "n6", "label": "done / error / cancelled" },
+    { "from": "n5", "to": "f3", "label": "轮询失败" },
+    { "from": "n6", "to": "n7", "label": "徽标/弹窗同步" },
+    { "from": "n7", "to": "n8", "label": "PENDING 空" },
+    { "from": "f1", "to": "n8", "label": "不接管，结束" },
+    { "from": "f2", "to": "n6", "label": "浏览器接管下载并提示" },
+    { "from": "f3", "to": "n5", "label": "下一轮重试" },
+    { "from": "f4", "to": "n6", "label": "仅屏蔽卡片，下载继续" }
+  ],
+  "mapping": [
+    { "file": "browser-extension/background.js", "change": "HUD key；提交前推卡；轮询 0.5s；徽标百分比；失败卡转「已交回浏览器」", "nodes": ["n2", "n4", "n5", "n7", "f2", "f3"] },
+    { "file": "browser-extension/content.js", "change": "按 key 建卡；速度插值、ETA、连接数", "nodes": ["n2", "n5", "n6", "f2", "f4"] },
+    { "file": "browser-extension/popup.js, popup.html", "change": "增量更新行；800ms 刷新", "nodes": ["n7"] }
+  ],
+  "open_questions": [
+    "Q1 轮询频率：页面/后台 0.5s、弹窗 0.8s，接受吗？",
+    "Q2 徽标：单任务显示百分比数字，多任务显示数量，可以吗？",
+    "Q3 失败卡：「已交回浏览器」卡片 6s 后消失，通知不变，可以吗？"
+  ]
+}

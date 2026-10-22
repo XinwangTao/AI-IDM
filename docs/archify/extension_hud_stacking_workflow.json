@@ -4,11 +4,11 @@
   "kind": "workflow",
   "status": "待确认（L1-C，v2：新增 × 永久屏蔽分支）",
   "created": "2026-10-21",
-  "version_note": "v1 已确认并实施（Extension 1.5.0，提交 5edb63e）。v2 仅新增 × 永久屏蔽分支，其余与 v1 一致。",
+  "version_note": "v1 已确认并实施（Extension 1.5.0，提交 5edb63e）。v2 仅新增 × 永久屏蔽分支，其余与 v1 一致。1.9.1 起按客户端 key 建卡、轮询 0.5s（本批同步）。",
   "batch": {
     "in_scope": [
-      "content.js：close 点击 → tid 加入 dismissed 屏蔽集并立即从 DOM 移除该卡",
-      "content.js：show/finish 前置判定，命中屏蔽集的后续轮询消息一律忽略（卡不再被 1.5s 推送重建）",
+      "content.js：close 点击 → key 加入 dismissed 屏蔽集并立即从 DOM 移除该卡",
+      "content.js：show/finish 前置判定，命中屏蔽集的后续轮询消息一律忽略（卡不再被 0.5s 推送重建）",
       "background.js 无改动；单任务/多任务其余行为与 1.5.0 一致"
     ],
     "out_of_scope": [
@@ -19,17 +19,17 @@
     "note": "dismissed 为页面会话内的 Set：页面刷新/跳转后自然清空（卡片本来也随文档销毁），与卡片生命周期一致。"
   },
   "nodes": [
-    { "id": "n1", "kind": "start", "label": "需要展示任务状态", "note": "background：track() 初始推送或 pollOnce() 轮询更新（每 1.5s）" },
-    { "id": "n2", "kind": "step", "label": "组装并投递", "note": "消息 {type:\"hud\", tid, payload} 经 chrome.tabs.sendMessage 发到任务所属 tab；payload 含 phase 与三态字段" },
-    { "id": "n3", "kind": "decision", "label": "content 侧判定", "note": "v2 扩为三重判定：payload 是否有效（含 tid、phase 已知）；tid 是否在 dismissed 屏蔽集；该 tid 是否已有卡片" },
+    { "id": "n1", "kind": "start", "label": "需要展示任务状态", "note": "background：track() 初始推送或 pollOnce() 轮询更新（每 0.5s）" },
+    { "id": "n2", "kind": "step", "label": "组装并投递", "note": "消息 {type:\"hud\", key, payload} 经 chrome.tabs.sendMessage 发到任务所属 tab；payload 含 phase 与三态字段" },
+    { "id": "n3", "kind": "decision", "label": "content 侧判定", "note": "v2 扩为三重判定：payload 是否有效（含 key、phase 已知）；key 是否在 dismissed 屏蔽集；该 key 是否已有卡片" },
     { "id": "n4", "kind": "step", "label": "建卡", "note": "无卡片且未屏蔽：在堆叠容器末尾新建（新卡在最下方、贴近右下角）" },
-    { "id": "n5", "kind": "step", "label": "更新", "note": "已有卡片：按 tid 定位既有卡片" },
+    { "id": "n5", "kind": "step", "label": "更新", "note": "已有卡片：按 key 定位既有卡片" },
     { "id": "n6", "kind": "step", "label": "渲染", "note": "按 phase 渲染：progress 三态（排队/连接/进度，1.2.1 行为保持）；done/error 终态样式" },
     { "id": "n7", "kind": "decision", "label": "是否终态", "note": "progress → 下一轮；done/error → 移除流程" },
     { "id": "n8", "kind": "end", "label": "终态停留后移除", "note": "done 6s / error 12s（现状时长）后从 DOM 移除该卡，堆叠自动收缩" },
-    { "id": "n9", "kind": "end", "label": "× 关闭（v2 新增）", "note": "用户点卡片 ×：tid 加入 dismissed 屏蔽集并立即从 DOM 移除该卡（1.5.0 现状：仅移除 DOM，会被下一条进度推送重建）" },
+    { "id": "n9", "kind": "end", "label": "× 关闭（v2 新增）", "note": "用户点卡片 ×：key 加入 dismissed 屏蔽集并立即从 DOM 移除该卡（1.5.0 现状：仅移除 DOM，会被下一条进度推送重建）" },
     { "id": "f1", "kind": "fallback", "label": "注入兜底", "note": "sendMessage 失败（SW 重启前开的老标签页无 content script）→ ensure() 注入后重推（现状保持）" },
-    { "id": "f2", "kind": "fallback", "label": "防御忽略", "note": "payload 缺 tid 或 phase 未知 → 忽略，不建卡" },
+    { "id": "f2", "kind": "fallback", "label": "防御忽略", "note": "payload 缺 key 或 phase 未知 → 忽略，不建卡" },
     { "id": "f3", "kind": "fallback", "label": "屏蔽命中忽略", "note": "v2 新增：已点 × 的任务，后续轮询消息一律忽略，卡片不再重建" }
   ],
   "edges": [
@@ -37,8 +37,8 @@
     { "from": "n2", "to": "n3" },
     { "from": "n3", "to": "n4", "label": "有效、未屏蔽、无卡片" },
     { "from": "n3", "to": "n5", "label": "已有卡片" },
-    { "from": "n3", "to": "f3", "label": "tid 已屏蔽（v2）" },
-    { "from": "n3", "to": "f2", "label": "缺 tid / phase 未知" },
+    { "from": "n3", "to": "f3", "label": "key 已屏蔽（v2）" },
+    { "from": "n3", "to": "f2", "label": "缺 key / phase 未知" },
     { "from": "n4", "to": "n6" },
     { "from": "n5", "to": "n6" },
     { "from": "n6", "to": "n7" },
