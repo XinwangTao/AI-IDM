@@ -1,0 +1,49 @@
+{
+  "name": "extension_update_check",
+  "title": "扩展内版本检查与更新提示（方案 C）",
+  "kind": "workflow",
+  "status": "已确认并落地（L1-D，2026-10-30，扩展 1.12.0）",
+  "created": "2026-10-30",
+  "version_note": "本图首次为「扩展自查版本 + 提示用户更新」建图。当前扩展以『加载已解压』方式安装，官方机制下永不自动更新；商店上架（方案 A）是终局，本图是其过渡/兜底提示链路。",
+  "batch": {
+    "in_scope": [
+      "background.js：新增定时版本检查（onStartup / onInstalled / alarm update-check 每 6h），拉取 latest.json 并与 chrome.runtime.getManifest().version 比较",
+      "background.js：命中新版本时写 chrome.storage.local（latest / notes / url / checked_at / dismissed_version），并在无活跃任务时挂角标 ↑",
+      "popup.html / popup.js：弹窗顶部新增更新横幅（版本号 + 「去更新」+「忽略此版本」），复用现有 footer/卡片样式",
+      "manifest.json：权限不新增（host_permissions <all_urls> 已覆盖），仅 version bump"
+    ],
+    "out_of_scope": [
+      "content.js：页面内 HUD 不做更新提示",
+      "服务端 / 下载引擎 / 接管与跟踪流程（已有图，本批不碰）",
+      "商店上架本身（见 extension_release_pipeline_workflow）",
+      "自动安装新版本：解压加载形态下无法自更新，本图只提示不代装"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "检查时机", "note": "chrome.runtime.onStartup / onInstalled / 弹窗打开 / alarm update-check（periodInMinutes=360）" },
+    { "id": "n2", "kind": "decision", "label": "冷却与前置", "note": "① navigator.onLine 为真；② checked_at 距今 ≥6h（弹窗打开可强制但同一会话只一次）；③ 未处于冷却期 → 否则 f1" },
+    { "id": "n3", "kind": "step", "label": "拉取版本清单", "note": "GET latest.json，按 raw → jsDelivr → gh-proxy 顺序回退，每源 3s 超时、cache:no-store；全部失败不重试不打扰" },
+    { "id": "n4", "kind": "decision", "label": "版本比较", "note": "三段式 semver 数值比较：remote > local 才算有新版；相等/更低 → f1" },
+    { "id": "n5", "kind": "step", "label": "写入状态与角标", "note": "storage.local.update_state = {latest, notes, url, checked_at}；dismissed_version < latest 时才提示；角标仅在无活跃下载任务时显示 ↑" },
+    { "id": "n6", "kind": "decision", "label": "弹窗展示横幅", "note": "打开弹窗读 update_state；有新版且未被忽略 → 顶部横幅「发现新版本 vX.Y.Z」+ 两个按钮" },
+    { "id": "n7", "kind": "end", "label": "打开获取页", "note": "点「去更新」→ 商店详情页（已上架）；未上架时 → GitHub Release 页，文案改为「下载后替换扩展目录」" }
+  ],
+  "fallbacks": [
+    { "id": "f1", "kind": "fallback", "label": "静默跳过", "note": "离线 / 冷却中 / 超时 / JSON 解析失败 / 无新版 → 只更新 checked_at，不动任何 UI，不写日志噪音" },
+    { "id": "f2", "kind": "fallback", "label": "忽略此版本", "note": "点「忽略此版本」→ dismissed_version = 当前 latest；同一版本不再提示，出现更高版本时重新提示" },
+    { "id": "f3", "kind": "fallback", "label": "商店版提示改写", "note": "判据：manifest.update_url 存在（商店安装时注入，无需 management 权限）。横幅改为「新版本 vX 将由浏览器自动更新」，隐藏手动入口，且不占 ↑ 角标" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3", "label": "可以检查" },
+    { "from": "n2", "to": "f1", "label": "离线 / 冷却中" },
+    { "from": "n3", "to": "n4", "label": "200 + 合法 JSON" },
+    { "from": "n3", "to": "f1", "label": "超时 / 非法响应" },
+    { "from": "n4", "to": "n5", "label": "远端更高" },
+    { "from": "n4", "to": "f1", "label": "不高于本地" },
+    { "from": "n5", "to": "n6", "label": "用户打开弹窗" },
+    { "from": "n6", "to": "n7", "label": "点「去更新」" },
+    { "from": "n6", "to": "f2", "label": "点「忽略此版本」" },
+    { "from": "n5", "to": "f3", "label": "来自商店安装" }
+  ]
+}

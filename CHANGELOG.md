@@ -6,6 +6,19 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## Extension 1.12.0 - 2026-10-30
+
+### Added
+- **扩展内更新提示。** 「加载已解压」安装的扩展浏览器永不自动更新，从这一版起自己比对
+  仓库根目录的 `latest.json`：启动 / 安装 / 弹窗打开 / 每 6h 各查一次（3s 超时、6h 冷却、
+  失败 30min 退避；raw → jsDelivr → gh-proxy 三源回退，国内网络下不会因单点被墙就失联）。
+  有新版时无活跃下载才挂紫色 `↑` 角标，弹窗顶部出一条
+  「发现新版本 vX.Y.Z」横幅，可「去更新」或「忽略此版本」（忽略只对当前版本生效）。
+  全链路静默失败，绝不打扰下载主流程。
+- **发版流水线。** `scripts/package_extension.py` 校验 `manifest.json` 与 CHANGELOG 版本
+  一致后打包 `dist/ai-idm-extension-<ver>.zip` 并刷新 `latest.json`；见
+  `docs/PUBLISHING.md` 与 `PRIVACY.md`（Edge Add-ons 上架备料）。
+
 ## Extension 1.11.0 - 2026-10-22
 
 ### Changed

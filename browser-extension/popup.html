@@ -50,6 +50,16 @@
            border-top:1px solid var(--line); font-size:11px; color:var(--muted); }
   a { color:var(--blue); text-decoration:none; }
   .empty { color:var(--muted); font-size:12px; padding:8px 0; }
+  .upd { display:none; align-items:center; gap:8px; margin:10px 14px 0; padding:8px 10px;
+         border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; border-radius:8px; font-size:12px; }
+  .upd.show { display:flex; }
+  .upd-txt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .upd a { flex:none; font-size:12px; }
+  .upd .sep { color:#c7d2fe; }
+  @media (prefers-color-scheme: dark) {
+    .upd { border-color:#3730a3; background:#1e1b4b; color:#c7d2fe; }
+    .upd .sep { color:#4338ca; }
+  }
 </style>
 </head>
 <body>
@@ -58,6 +68,13 @@
   <span class="title">AI-IDM</span>
   <span class="dot" id="dot" title="服务状态"></span>
 </header>
+
+<div class="upd" id="upd">
+  <span class="upd-txt" id="upd-txt"></span>
+  <a href="#" id="upd-go">去更新</a>
+  <span class="sep" id="upd-sep">·</span>
+  <a href="#" id="upd-x">忽略此版本</a>
+</div>
 
 <div class="body">
   <div class="card">

@@ -1,0 +1,45 @@
+{
+  "name": "extension_release_pipeline",
+  "title": "扩展发版与商店上架流水线（方案 A + C 的版本源）",
+  "kind": "workflow",
+  "status": "已确认并落地（L1-D，2026-10-30）—— 脚本与文档已交付，商店提交待用户操作",
+  "created": "2026-10-30",
+  "version_note": "本图首次为扩展发版定流程。背景：仓库最后一次 Release 是 v1.12.5，其中打包的扩展仅 1.2.0，而 main 上已是 1.11.0 —— 扩展 1.3→1.11 从未发布，说明发版流程本身已断。",
+  "batch": {
+    "in_scope": [
+      "新增 scripts/package_extension.py：校验 manifest.json 与 CHANGELOG 版本一致 → 打 dist/ai-idm-extension-<ver>.zip（排除 .pem/.git/tests/node_modules）→ 生成/更新 latest.json",
+      "新增 docs/PUBLISHING.md：商店资料清单（名称/描述/截图/隐私政策 URL/权限说明）与提交步骤",
+      "新增 PRIVACY.md：声明不采集下载内容与浏览记录，仅访问本机回环服务",
+      "更新 latest.json 到仓库（供方案 C 的扩展读取）"
+    ],
+    "out_of_scope": [
+      "Partner Center 账号注册与首次提交（需用户本人在浏览器完成，代码侧只备料）",
+      "服务端/CLI 的 PyPI 发版（独立流程，不在本图）",
+      "自动签名 .crx 与自托管 update_url（方案 B，本批不做）"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "改动完成", "note": "扩展代码改动已合并到 main，工作区干净" },
+    { "id": "n2", "kind": "step", "label": "版本 bump", "note": "manifest.json version + CHANGELOG「Extension x.y.z」条目；脚本校验两处一致，不一致直接失败" },
+    { "id": "n3", "kind": "step", "label": "打包 ZIP", "note": "dist/ai-idm-extension-<ver>.zip；只含 manifest/background/content/popup/options/icons；不带 .pem、.git、tests" },
+    { "id": "n4", "kind": "step", "label": "提交商店", "note": "Edge Add-ons Partner Center 上传 ZIP（免费）；同一 ZIP 可复用提交 Chrome Web Store（一次性 5 美元）" },
+    { "id": "n5", "kind": "decision", "label": "商店审核", "note": "Edge 通常数天；<all_urls> + downloads + notifications 权限会被重点审查" },
+    { "id": "n6", "kind": "step", "label": "发布版本源", "note": "过审后：GitHub Release 打 tag + 上传 ZIP；更新仓库 latest.json（version / published / store_url / zip_url）" },
+    { "id": "n7", "kind": "end", "label": "全设备生效", "note": "商店安装的设备数小时内自动升级；解压加载的设备开弹窗看到「发现新版本」横幅" }
+  ],
+  "fallbacks": [
+    { "id": "f1", "kind": "fallback", "label": "审核驳回", "note": "按反馈修改 → 回到 n2 重新 bump（不能用同一版本号重提交）" },
+    { "id": "f2", "kind": "fallback", "label": "仅本地分发", "note": "商店未上架/审核期间：latest.json 的 store_url 为空，横幅文案改为「下载 ZIP 替换扩展目录」，不误导用户去点不存在的商店页" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" },
+    { "from": "n3", "to": "n4" },
+    { "from": "n4", "to": "n5" },
+    { "from": "n5", "to": "n6", "label": "通过" },
+    { "from": "n5", "to": "f1", "label": "驳回" },
+    { "from": "f1", "to": "n2" },
+    { "from": "n6", "to": "n7", "label": "已上架" },
+    { "from": "n6", "to": "f2", "label": "未上架" }
+  ]
+}

@@ -121,6 +121,11 @@ ai-idm serve
 2. The options page opens on first install: paste the token, click "Test connection"
 3. From then on, browser downloads are taken over by AI-IDM and land in `~/Downloads`
 
+> An unpacked install is never auto-updated by the browser, so the extension checks the repo's
+> `latest.json` itself and shows an "update available" banner in the popup (since 1.12.0).
+> Publishing to Edge Add-ons — after which the browser updates every device — is tracked in
+> `docs/PUBLISHING.md`.
+
 Three entry points: **auto** (cancel the browser download and hand the URL over — restored to the
 browser on any failure), **context menu** (link / media / page) and **popup** (current tab plus live
 progress). Cookies and Referer are forwarded, so logged-in downloads work. When a download finishes,

@@ -40,6 +40,19 @@ const SKIP_PATTERNS = [
   /^https?:\/\/msedge\.b\.tlu\.dl\.delivery\.mp\.microsoft\.com\//i,
 ];
 
+// 版本检查（方案 C）：扩展以「加载已解压」安装时浏览器永不自动更新，只能自己比对仓库
+// 里的 latest.json 再在弹窗提示。流程见 docs/archify/extension_update_check_workflow。
+// 多个源按顺序试：raw 最快，jsDelivr / gh-proxy 作 CDN 兜底（国内网络经常干扰 raw）。
+const UPDATE_URLS = [
+  "https://raw.githubusercontent.com/XinwangTao/AI-IDM/main/latest.json",
+  "https://cdn.jsdelivr.net/gh/XinwangTao/AI-IDM@main/latest.json",
+  "https://gh-proxy.com/https://raw.githubusercontent.com/XinwangTao/AI-IDM/main/latest.json",
+];
+const UPDATE_ALARM = "update-check";
+const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;   // 正常冷却 6h
+const UPDATE_RETRY_MS = 30 * 60 * 1000;          // 拉取失败只要 30min 后就重试
+const UPDATE_TIMEOUT_MS = 3000;
+
 // ---------------------------------------------------------------- 配置 / 请求
 
 async function cfg() {
@@ -162,10 +175,102 @@ async function bumpBadge(pre) {
     } else if (active.length > 1) {
       text = String(active.length);
     }
+    if (!text && hasNewer()) {
+      // 有新版本且没有活跃任务时才占用角标；下载进度永远优先
+      await chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+      text = "↑";
+    }
     await chrome.action.setBadgeText({ text });
   } catch (_) {
-    if (Date.now() > badgeHoldUntil) await chrome.action.setBadgeText({ text: "" });
+    if (Date.now() > badgeHoldUntil) {
+      if (hasNewer()) await chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+      await chrome.action.setBadgeText({ text: hasNewer() ? "↑" : "" });
+    }
   }
+}
+
+// ---------------------------------------------------------------- 版本检查
+
+/** { checked_at, latest, notes, url, dismissed }；latest 为空表示当前已是最新。 */
+let updateState = { checked_at: 0, latest: "", notes: "", url: "", dismissed: "" };
+let updateStateLoaded = false;
+
+function cmpVersion(a, b) {
+  const pa = String(a || "0").split(".");
+  const pb = String(b || "0").split(".");
+  for (let i = 0; i < 3; i++) {
+    const d = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+async function loadUpdateState(force = false) {
+  if (updateStateLoaded && !force) return updateState;
+  try {
+    const got = await chrome.storage.local.get("update_state");
+    if (got.update_state && typeof got.update_state === "object") {
+      updateState = { ...updateState, ...got.update_state };
+    }
+  } catch (_) { /* 读不到就用默认值：当作没有新版本 */ }
+  updateStateLoaded = true;
+  return updateState;
+}
+
+/** 商店安装的扩展会被浏览器自己升级：manifest 里由商店注入的 update_url 就是判据（无需 management 权限）。 */
+function fromStore() {
+  try { return !!chrome.runtime.getManifest().update_url; } catch (_) { return false; }
+}
+
+/** 有比本地更新、且用户没忽略过这一版的版本号。 */
+function hasNewer() {
+  return !!updateState.latest
+    && updateState.latest !== updateState.dismissed
+    && cmpVersion(updateState.latest, chrome.runtime.getManifest().version) > 0
+    && !fromStore();                    // 商店版由浏览器自动升级，不占角标
+}
+
+/** 拉 latest.json 比对版本。失败一律静默，绝不打扰下载主流程。 */
+async function checkForUpdate({ force = false } = {}) {
+  await loadUpdateState();
+  const age = Date.now() - (updateState.checked_at || 0);
+  if (!force && age < UPDATE_INTERVAL_MS) return updateState;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return updateState;
+
+  let data = null;
+  for (const url of UPDATE_URLS) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), UPDATE_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { cache: "no-store", signal: ac.signal });
+      if (res.ok) data = await res.json();
+    } catch (_) { /* 超时 / 被墙 / 非法 JSON：换下一个源 */ } finally {
+      clearTimeout(timer);
+    }
+    if (data) break;
+  }
+
+  const next = { ...updateState };
+  if (data && typeof data.version === "string" && data.version.trim()) {
+    const latest = data.version.trim();
+    next.checked_at = Date.now();
+    if (cmpVersion(latest, chrome.runtime.getManifest().version) > 0) {
+      next.latest = latest;
+      next.notes = String(data.notes || "");
+      next.url = String(data.store_url || data.zip_url || "");
+    } else {
+      next.latest = ""; next.notes = ""; next.url = "";
+    }
+  } else {
+    // 没拿到可用响应：只做 30min 退避，别把失败当成功缓存 6h
+    next.checked_at = Date.now() - (UPDATE_INTERVAL_MS - UPDATE_RETRY_MS);
+  }
+
+  updateState = next;
+  updateStateLoaded = true;
+  try { await chrome.storage.local.set({ update_state: updateState }); } catch (_) { /* 存不下就只在本次会话有效 */ }
+  bumpBadge();
+  return updateState;
 }
 
 /** 正在跟踪的服务端任务：tid -> {url, tabId, name}。用于页面浮层 + 完成通知。 */
@@ -447,6 +552,9 @@ function buildMenus() {
 chrome.runtime.onInstalled.addListener((details) => {
   buildMenus();
   chrome.alarms.create("idm-tick", { periodInMinutes: 0.5 });
+  chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 360 });
+  loadUpdateState(true);
+  checkForUpdate({ force: true });      // 装好/升级后立刻看一眼有没有更新
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
   }
@@ -455,12 +563,18 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onStartup.addListener(() => {
   buildMenus();
   chrome.alarms.create("idm-tick", { periodInMinutes: 0.5 });
+  chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 360 });
+  checkForUpdate();
 });
 
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "idm-tick") {
     bumpBadge();
     pollOnce();          // 兜底：worker 被休眠时靠它续上完成通知
+    return;
+  }
+  if (a.name === UPDATE_ALARM) {
+    checkForUpdate();
   }
 });
 
@@ -562,7 +676,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     return true;
   }
   if (msg.type === "refreshBadge") {
-    bumpBadge().then(() => reply({ ok: true }));
+    loadUpdateState(true).then(() => bumpBadge()).then(() => reply({ ok: true }));
+    return true;
+  }
+  if (msg.type === "checkUpdate") {
+    checkForUpdate({ force: !!msg.force }).then((st) => reply(st)).catch(() => reply(null));
     return true;
   }
 });

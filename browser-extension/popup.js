@@ -11,6 +11,42 @@ const REFRESH_MS = 800;
 let cfg = { ...DEFAULTS };
 let currentUrl = "";
 
+const UPDATE_KEY = "update_state";
+const RELEASE_PAGE = "https://github.com/XinwangTao/AI-IDM/releases";
+
+function cmpVersion(a, b) {
+  const pa = String(a || "0").split(".");
+  const pb = String(b || "0").split(".");
+  for (let i = 0; i < 3; i++) {
+    const d = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+async function readUpdate() {
+  const got = await chrome.storage.local.get(UPDATE_KEY);
+  return got[UPDATE_KEY] || null;
+}
+
+/** 只画横幅，不做网络；状态由 background 在检查后写进 storage。 */
+function renderUpdate(st) {
+  const box = $("#upd");
+  const cur = chrome.runtime.getManifest().version;
+  const newer = !!(st && st.latest
+    && st.latest !== st.dismissed
+    && cmpVersion(st.latest, cur) > 0);
+  if (!newer) { box.classList.remove("show"); return; }
+  // 商店安装的由浏览器自动升级：只告知，不给手动入口
+  const store = !!chrome.runtime.getManifest().update_url;
+  $("#upd-txt").textContent = store
+    ? "新版本 v" + st.latest + " 将由浏览器自动更新"
+    : "发现新版本 v" + st.latest + (st.notes ? " · " + st.notes : "");
+  $("#upd-go").style.display = store ? "none" : "";
+  $("#upd-sep").style.display = store ? "none" : "";
+  box.classList.add("show");
+}
+
 const rowMap = new Map();   // id -> { el, nm, bar, pct, btn, st }
 const busy = new Set();     // 已点「取消/移除」、等结果的 id
 
@@ -171,6 +207,23 @@ $("#opts").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
+$("#upd-go").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const st = await readUpdate();
+  chrome.tabs.create({ url: (st && st.url) || RELEASE_PAGE });
+});
+
+$("#upd-x").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const st = await readUpdate();
+  if (st && st.latest) {
+    // 记下被忽略的版本号：同一个版本不再提示，更高版本会重新出现
+    await chrome.storage.local.set({ [UPDATE_KEY]: { ...st, dismissed: st.latest } });
+  }
+  renderUpdate(null);
+  chrome.runtime.sendMessage({ type: "refreshBadge" }).catch(() => {});
+});
+
 // 列表用事件委托：行会复用，监听器必须挂在容器上
 $("#rows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button.act");
@@ -205,6 +258,10 @@ $("#rows").addEventListener("click", async (e) => {
 (async () => {
   await loadCfg();
   await initTab();
+  renderUpdate(await readUpdate().catch(() => null));   // 先画上次检查的结果，别等网络
+  chrome.runtime.sendMessage({ type: "checkUpdate" })
+    .then((st) => { if (st) renderUpdate(st); })
+    .catch(() => { /* worker 没响应：保留上次状态 */ });
   await refresh();
   setInterval(refresh, REFRESH_MS);
 })();
