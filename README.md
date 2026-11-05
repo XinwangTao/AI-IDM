@@ -47,6 +47,26 @@ python -m ai_idm get https://example.com/file.zip
 
 Python 3.10+. No runtime dependencies.
 
+## Updates
+
+Editable installs update in place from the repository remote (server + Edge extension):
+
+```bash
+ai-idm update            # check now, ask before installing
+ai-idm update --check    # check only (exit 2 = update available)
+ai-idm update --apply    # install without asking (used by the server)
+ai-idm update --rollback # go back to the commit before the last update
+```
+
+`ai-idm serve` checks every 6 hours (30 min back-off on failure), exposes
+`GET /update`, and the extension popup shows an "update service" banner.
+Updates are refused while downloads are running; a failed rebase/install is
+rolled back to the previous commit. Flow diagram:
+`docs/archify/ai_idm_auto_update_workflow.html`.
+
+Optional autostart (Windows): `python scripts/install_autostart.py`
+(`--remove` / `--status`).
+
 ## CLI
 
 ```bash

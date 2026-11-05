@@ -6,6 +6,27 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.15.0] - 2026-11-05
+
+### Added
+- **整包自动更新（服务端 + 扩展）。** `ai-idm update` 用 `git fetch` 比对远端与本地
+  提交，只提示不自动装；确认后 rebase 到远端、仅当 `pyproject.toml` 变化时才
+  `pip install -e .`、同步 Edge 扩展快照并重启服务。失败自动回滚到旧提交，
+  回滚点先落盘（`AI_IDM_HOME/update_state.json`），日志在 `AI_IDM_HOME/update.log`。
+  检查冷却 6h、失败退避 30min，全程不打扰下载主流程。
+- **服务端 `/update`、`/update/check`、`/update/apply` 接口**（需令牌）；有下载任务在跑时
+  拒绝更新。`ai-idm serve` 常驻时每 30 分钟自查一次，并新增单实例保护（自启+手动
+  同时启动时第二个实例安静退出）。
+- **扩展弹窗新增「服务端更新」横幅**：读本地服务 `/update`，点「更新服务」直接更新并重启。
+  扩展自身的 `latest.json` 检查保留为服务未启动时的兜底。
+- `scripts/install_autostart.py`：登记/移除开机自启（启动文件夹 VBS）。
+  流程图：`docs/archify/ai_idm_auto_update_workflow.html`。
+
+## Extension 1.13.0 - 2026-11-05
+
+### Added
+- 弹窗顶部新增服务端/整包更新横幅（唯一真源是本地 `ai-idm serve` 的 `/update`）。
+
 ## Extension 1.12.0 - 2026-10-30
 
 ### Added
