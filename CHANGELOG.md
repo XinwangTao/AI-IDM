@@ -6,6 +6,14 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.15.3] - 2026-11-05
+
+### Changed
+- **更新期间服务不再中断。** 以前 `/update/apply` 先停服务再更新；现在服务继续跑旧代码，
+  更新完成才通过新增的令牌保护的 `POST /shutdown` 收尾并重启。更新失败时服务完全不受影响。
+- 旧版本没有 `/shutdown` 时，更新器会先确认 `/ping` 是 AI-IDM，再按端口兜底停止一次（仅过渡期）。
+- 扩展弹窗更新横幅支持“正在更新…”状态。
+
 ## [1.15.2] - 2026-11-05
 
 ### Fixed
@@ -44,6 +52,11 @@ still change.
   扩展自身的 `latest.json` 检查保留为服务未启动时的兜底。
 - `scripts/install_autostart.py`：登记/移除开机自启（启动文件夹 VBS）。
   流程图：`docs/archify/ai_idm_auto_update_workflow.html`。
+
+## Extension 1.13.1 - 2026-11-05
+
+### Changed
+- 更新横幅支持“正在更新…”状态（更新期间服务保持在线，完成后再重启）。
 
 ## Extension 1.13.0 - 2026-11-05
 

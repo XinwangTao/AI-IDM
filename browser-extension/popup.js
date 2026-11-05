@@ -52,11 +52,19 @@ function renderUpdate(st) {
 function renderAppUpdate(st) {
   const box = $("#appupd");
   if (!box) return;
-  const show = !!(st && st.available && !st.applying);
+  const applying = !!(st && st.applying);
+  const show = !!(st && (applying || st.available));
   if (!show) { box.classList.remove("show"); return; }
-  $("#appupd-txt").textContent =
-    `服务端 v${st.local_version || "?"} → v${st.remote_version || "?"}`
-    + (st.behind ? ` · ${st.behind} 个新提交` : "");
+  const link = $("#appupd-go");
+  if (applying) {
+    $("#appupd-txt").textContent = "正在更新，完成后服务会自动重启…";
+    link.style.display = "none";
+  } else {
+    $("#appupd-txt").textContent =
+      `服务端 v${st.local_version || "?"} → v${st.remote_version || "?"}`
+      + (st.behind ? ` · ${st.behind} 个新提交` : "");
+    link.style.display = "";
+  }
   box.classList.add("show");
 }
 

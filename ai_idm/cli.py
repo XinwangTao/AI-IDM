@@ -451,6 +451,7 @@ def cmd_update(args):
             return 1
         res = updater.apply()
         if args.restart_server:
+            updater.stop_server()          # 先把旧进程请走，再拉起新代码
             res["restarting"] = updater.spawn_restart()
         if args.json:
             print(json.dumps(res, ensure_ascii=False, indent=2))

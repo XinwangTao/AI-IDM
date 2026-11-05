@@ -509,6 +509,15 @@ class TakeoverServer:
                 if path == "/update/apply":
                     code, obj = app.update_apply()
                     return self._json(code, obj)
+                if path == "/shutdown":
+                    # 只给本地更新器收尾用；有任务在跑就拒绝，避免打断下载
+                    active = app.active_downloads()
+                    if active:
+                        return self._json(409, {"ok": False,
+                                                "error": f"还有 {active} 个任务在跑"})
+                    self._json(200, {"ok": True})
+                    threading.Timer(0.5, app.stop).start()
+                    return
                 return self._json(404, {"ok": False, "error": "未知接口"})
 
             # --- 业务 ---
@@ -712,9 +721,9 @@ class TakeoverServer:
                                      "--apply", "--restart-server"])
         if not ok:
             return 500, {"ok": False, "error": "更新进程启动失败，服务保持运行"}
-        threading.Timer(1.0, self.stop).start()
+        # 服务继续跑旧代码，更新完成后再由更新进程 /shutdown —— 更新失败也不影响下载
         return 200, {"ok": True, "restarting": True,
-                     "detail": "更新中，服务会短暂重启；扩展可能需要在 edge://extensions 重新加载"}
+                     "detail": "更新中，完成后服务会自动重启；扩展可能需要在 edge://extensions 重新加载"}
 
     # ---------- HLS ----------
 

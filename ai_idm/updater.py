@@ -255,6 +255,47 @@ def _wait_port_free(host, port, timeout=25) -> bool:
     return False
 
 
+def _kill_port_owner(port) -> bool:
+    """兜底：旧版本没有 /shutdown 时按端口杀服务进程（先确认 /ping 是 ai-idm）。"""
+    if os.name != "nt":
+        return False
+    try:
+        out = _run(["netstat", "-ano"], 10).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].endswith(f":{port}") and parts[3] == "LISTENING":
+                pid = parts[4]
+                _run(["taskkill", "/PID", pid, "/F"], 10)
+                return True
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return False
+
+
+def stop_server(timeout=8) -> bool:
+    """让正在运行的 serve 退出（更新完成后收尾用）。"""
+    import urllib.request
+    host, port = _serve_addr()
+    if not _serve_alive(host, port):
+        return True
+    cfg = cfgmod.load()
+    token = cfg.get("server_token") or ""
+    body = json.dumps({"token": token}).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://{host}:{port}/shutdown", data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-AI-IDM-Token": token})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if r.status == 200:
+                return _wait_port_free(host, port, 10)
+    except Exception as e:                                   # noqa: BLE001
+        log(f"/shutdown 不可用（{e}），尝试按端口停止")
+    if _serve_alive(host, port) and _kill_port_owner(port):
+        return _wait_port_free(host, port, 10)
+    log("停止旧服务失败：端口仍被占用")
+    return False
+
+
 # ---------------------------------------------------------------- 检查
 
 def _due(st: dict, now: float) -> bool:
