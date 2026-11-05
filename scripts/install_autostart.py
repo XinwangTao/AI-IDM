@@ -39,8 +39,8 @@ def launcher() -> list[str]:
 
 def vbs_text() -> str:
     args = launcher()
-    cmd = " ".join(f'""{a}""' if " " in a else a for a in args)
-    quoted = cmd.replace('"', '""')
+    cmd = " ".join(f'"{a}"' if " " in a else a for a in args)
+    quoted = cmd.replace('"', '""')          # VBS 字符串里的字面引号要写成两个
     return (
         '\' AI-IDM 接管服务开机自启（由 scripts/install_autostart.py 生成）\r\n'
         'Set sh = CreateObject("WScript.Shell")\r\n'
