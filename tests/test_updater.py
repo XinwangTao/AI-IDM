@@ -100,6 +100,25 @@ def main():
     old_ver = open(os.path.join(WORK, "ai_idm", "__init__.py"), encoding="utf-8").read()
     results.append(("rollback-ok", res.get("ok") is True and "1.0.0" in old_ver, res))
 
+    # 远方推一个导入就会炸的版本：必须回滚，不能把起不来的代码当成功
+    with open(os.path.join(CLONE, "ai_idm", "__init__.py"), "w", encoding="utf-8") as f:
+        f.write('__version__ = "9.9.9"\ndef broken(:\n    pass\n')
+    subprocess.run(["git", "add", "-A"], cwd=CLONE, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "broken"], cwd=CLONE, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=CLONE, check=True)
+    st = updater.check(force=True)
+    res = updater.apply()
+    now_ver = open(os.path.join(WORK, "ai_idm", "__init__.py"), encoding="utf-8").read()
+    results.append(("apply-broken-rolls-back",
+                    res.get("ok") is False and "1.0.0" in now_ver
+                    and updater.read_state().get("applying") is False, res))
+
+    # 更新进程被杀留下的 applying 锁必须能在冷却后自动解除
+    updater.write_state(applying=True, apply_started_at=1.0)
+    st = updater.check(force=True)
+    results.append(("stale-apply-cleared",
+                    st.get("applying") is False, st.get("error")))
+
     print("\n=== 结果 ===")
     allok = True
     for name, ok, detail in results:

@@ -396,6 +396,34 @@ def _render_update_state(st):
         print(f"  {line}")
 
 
+def _server_running_tasks():
+    """问本地服务还有几个任务在跑；服务没开返回 None。"""
+    import urllib.request
+    cfg = cfgmod.load()
+    host = cfg.get("server_host") or "127.0.0.1"
+    port = int(cfg.get("server_port") or 13391)
+    try:
+        req = urllib.request.Request(f"http://{host}:{port}/status",
+                                     headers={"X-AI-IDM-Token": cfg.get("server_token") or ""})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return sum(1 for t in data.get("tasks") or [] if t.get("status") == "running")
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _server_alive():
+    import urllib.request
+    cfg = cfgmod.load()
+    host = cfg.get("server_host") or "127.0.0.1"
+    port = int(cfg.get("server_port") or 13391)
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/ping", timeout=1.5) as r:
+            return json.loads(r.read().decode("utf-8", "replace")).get("name") == "ai-idm"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def cmd_update(args):
     from . import updater
 
@@ -411,17 +439,27 @@ def cmd_update(args):
             print(f"回滚失败：{res.get('error')}")
         return 0 if res.get("ok") else 1
 
+    def _guard_busy():
+        active = _server_running_tasks()
+        if active:
+            print(f"还有 {active} 个下载任务在跑，完成后再更新")
+            return False
+        return True
+
     if args.apply:
+        if not _guard_busy():
+            return 1
         res = updater.apply()
         if args.restart_server:
-            updater.spawn_restart()
-            res["restarting"] = True
+            res["restarting"] = updater.spawn_restart()
         if args.json:
             print(json.dumps(res, ensure_ascii=False, indent=2))
         elif res.get("ok"):
             print(f"更新完成：{res.get('from', '')[:8]} -> {res.get('to', '')[:8]}")
             if res.get("detail"):
                 print(f"  {res['detail']}")
+            if _server_alive() and not args.restart_server:
+                print("  运行中的服务仍是旧代码，重启 serve 后生效")
         else:
             print(f"更新失败：{res.get('error')}")
         return 0 if res.get("ok") else 1
@@ -440,6 +478,8 @@ def cmd_update(args):
         return 2
     answer = input("现在更新？会重启接管服务，下载中的任务会阻止更新 [y/N] ").strip().lower()
     if args.yes or answer in ("y", "yes"):
+        if not _guard_busy():
+            return 1
         res = updater.apply()
         print("更新完成" if res.get("ok") else f"更新失败：{res.get('error')}")
         return 0 if res.get("ok") else 1

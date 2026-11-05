@@ -6,6 +6,20 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.15.1] - 2026-11-05
+
+### Fixed
+- **更新后必须能导入才算成功。** rebase/pip 之后跑一次 `python -c "import ai_idm"`，
+  失败自动回滚——上游一个语法错误不会再让服务起不来还被报成功。
+- **更新进程被强杀不再永久锁死。** `applying` 超过 15 分钟视为中断并解除；
+  上次留下的半截 rebase 会在下次更新时自动 `--abort`（仅当状态文件记为本次更新）。
+- **重启竞态。** `--restart-server` 先等旧进程放开端口再拉起，并确认 `/ping` 恢复；
+  否则单实例保护会让新实例安静退出、服务直接消失。
+- **冲突可诊断。** rebase 失败会列出冲突文件（前 5 个）并回滚。
+- CLI `--apply` 也遵守"有下载任务不更新"；更新后提示运行中的服务仍是旧代码。
+- 检查/安装/回滚加互斥锁，避免 watcher 与请求同时 `git fetch`。
+- 回滚后的 `available` 按实际落后提交数计算，不再硬编码。
+
 ## [1.15.0] - 2026-11-05
 
 ### Added

@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -24,9 +25,13 @@ from . import config as cfgmod
 
 CHECK_INTERVAL = 6 * 60 * 60      # 正常冷却 6h
 RETRY_INTERVAL = 30 * 60          # 失败后 30min 再试
+STALE_APPLY = 15 * 60             # 更新进程失联超过 15min 视为中断
 GIT_TIMEOUT = 60
 FETCH_TIMEOUT = 20
 PIP_TIMEOUT = 600
+
+# 检查/安装互斥：watcher 与 HTTP 请求可能同时触发 git fetch
+_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------- 基础
@@ -148,6 +153,55 @@ def _subjects(ref: str, limit=8):
     return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()][:limit]
 
 
+def _rebase_in_progress() -> bool:
+    g = root() / ".git"
+    return any((g / name).exists()
+               for name in ("rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD"))
+
+
+def _conflicted_files():
+    r = _git("diff", "--name-only", "--diff-filter=U")
+    return [x.strip() for x in r.stdout.splitlines() if x.strip()]
+
+
+def _smoke() -> tuple[bool, str]:
+    """新代码必须能被导入，否则回滚——不能把起不来的版本当成功。"""
+    try:
+        r = _run([sys.executable, "-c", "import ai_idm; print(ai_idm.__version__)"], 90)
+    except subprocess.TimeoutExpired:
+        return False, "新版本导入检查超时"
+    if r.returncode != 0:
+        out = (r.stderr or r.stdout or "").strip().splitlines()
+        return False, f"新版本导入失败：{out[-1] if out else r.returncode}"
+    return True, ""
+
+
+def _serve_addr():
+    cfg = cfgmod.load()
+    host = cfg.get("server_host") or "127.0.0.1"
+    port = int(cfg.get("server_port") or 13391)
+    return host, port
+
+
+def _serve_alive(host, port) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/ping", timeout=1.5) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return data.get("name") == "ai-idm"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def _wait_port_free(host, port, timeout=25) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        if not _serve_alive(host, port):
+            return True
+        time.sleep(0.3)
+    return False
+
+
 # ---------------------------------------------------------------- 检查
 
 def _due(st: dict, now: float) -> bool:
@@ -158,10 +212,27 @@ def _due(st: dict, now: float) -> bool:
     return now - checked >= interval
 
 
+def _clear_stale_apply(st: dict, now: float) -> dict:
+    """更新进程被杀后会留下 applying=true，不清掉就永远更新不了。"""
+    if not st.get("applying"):
+        return st
+    started = float(st.get("apply_started_at") or 0)
+    if started and now - started < STALE_APPLY:
+        return st
+    log("检测到上次更新中断，解除 applying 锁")
+    return write_state(applying=False, error="上次更新中断（进程失联），已解除锁定；"
+                                             "如有残留 rebase 会在下次更新时自动清理")
+
+
 def check(force: bool = False) -> dict:
     """拉取远端并比较。失败只记录，不抛异常。"""
+    with _LOCK:
+        return _check_locked(force)
+
+
+def _check_locked(force: bool) -> dict:
     now = time.time()
-    st = read_state()
+    st = _clear_stale_apply(read_state(), now)
     if st.get("applying"):
         return st
     if not force and not _due(st, now):
@@ -242,11 +313,25 @@ def _restore(commit: str, branch: str) -> None:
 
 def apply() -> dict:
     """把工作树更新到远端最新；任何一步失败都回滚到旧提交。"""
-    st = read_state()
+    with _LOCK:
+        return _apply_locked()
+
+
+def _apply_locked() -> dict:
+    st = _clear_stale_apply(read_state(), time.time())
     if st.get("applying"):
         return {"ok": False, "error": "已有更新在进行中"}
     if not is_repo():
         return {"ok": False, "error": "当前安装不是 git 仓库，无法自动更新"}
+
+    # 上次更新被强杀可能留下半截 rebase：只清理我们自己留下的（有 apply_started_at）
+    if _rebase_in_progress():
+        if st.get("apply_started_at"):
+            log("清理上次中断留下的 rebase")
+            _git("rebase", "--abort")
+        else:
+            return {"ok": False,
+                    "error": "仓库里有未完成的 rebase/cherry-pick，请先手动处理（git rebase --abort）"}
 
     dirty = _git("status", "--porcelain", "--untracked-files=no")
     if dirty.stdout.strip():
@@ -269,8 +354,10 @@ def apply() -> dict:
 
         r = _git("rebase", ref, timeout=180)
         if r.returncode != 0:
+            files = _conflicted_files()
             _restore(old, branch)
-            raise RuntimeError("rebase 冲突或无新提交可用")
+            detail = f"：{', '.join(files[:5])}" if files else ""
+            raise RuntimeError(f"本地改动与上游冲突{detail}，已回滚")
 
         new = _head()
         if new == old:
@@ -285,6 +372,13 @@ def apply() -> dict:
                 _restore(old, branch)
                 _pip_install()
                 raise RuntimeError(err)
+
+        ok, err = _smoke()
+        if not ok:
+            _restore(old, branch)
+            if _pyproject_changed(old, new):
+                _pip_install()
+            raise RuntimeError(err)
 
         ext_ok, ext_msg = _sync_extension()
         write_state(applying=False, available=False, checked_at=time.time(),
@@ -304,26 +398,36 @@ def apply() -> dict:
 
 def rollback(commit: str | None = None) -> dict:
     """一键回到上一次更新前的提交（或指定提交）。"""
+    with _LOCK:
+        return _rollback_locked(commit)
+
+
+def _rollback_locked(commit: str | None) -> dict:
     st = read_state()
     target = commit or st.get("rollback_commit") or ""
     if not target:
         return {"ok": False, "error": "没有可用的回滚点"}
     if not is_repo():
         return {"ok": False, "error": "当前安装不是 git 仓库"}
+    if _rebase_in_progress():
+        return {"ok": False, "error": "仓库里有未完成的 rebase，请先处理"}
     dirty = _git("status", "--porcelain", "--untracked-files=no")
     if dirty.stdout.strip():
         return {"ok": False, "error": "工作区有未提交改动，请先提交或还原"}
     old = _head()
-    branch = _branch()
     r = _git("reset", "--hard", target)
     if r.returncode != 0:
         return {"ok": False, "error": "回滚失败"}
     if _pyproject_changed(old, target):
         _pip_install()
     ext_ok, ext_msg = _sync_extension()
-    write_state(applying=False, available=True, last_apply={
-        "ok": True, "at": time.time(), "from": old, "to": target,
-        "rollback": True, "ext_ok": ext_ok})
+    ref = _remote_ref()
+    ahead, behind = _counts(ref)
+    write_state(applying=False, available=behind > 0, ahead=ahead, behind=behind,
+                local_commit=_head(), local_version=_show_version("HEAD", "ai_idm/__init__.py"),
+                local_ext_version=_show_version("HEAD", "browser-extension/manifest.json"),
+                last_apply={"ok": True, "at": time.time(), "from": old, "to": target,
+                            "rollback": True, "ext_ok": ext_ok})
     log(f"手动回滚：{old[:8]} -> {target[:8]}")
     return {"ok": True, "from": old, "to": target, "detail": ext_msg}
 
@@ -353,4 +457,22 @@ def spawn_detached(args) -> bool:
 
 
 def spawn_restart() -> bool:
-    return spawn_detached([sys.executable, "-m", "ai_idm", "serve", "-q"])
+    """等旧服务放开端口再拉起新实例，并确认它真的起来了。
+
+    不等的话：旧 serve 还在关闭时新客人先绑端口 → 单实例保护让新实例安静退出，
+    结果服务彻底没了。
+    """
+    host, port = _serve_addr()
+    if not _wait_port_free(host, port, timeout=25):
+        log(f"重启失败：{host}:{port} 仍被占用，未启动新实例")
+        return False
+    if not spawn_detached([sys.executable, "-m", "ai_idm", "serve", "-q"]):
+        return False
+    end = time.time() + 30
+    while time.time() < end:
+        if _serve_alive(host, port):
+            log("服务已重启")
+            return True
+        time.sleep(0.5)
+    log("服务重启后 30s 内未响应 /ping")
+    return False
