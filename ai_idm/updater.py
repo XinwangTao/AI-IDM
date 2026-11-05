@@ -25,7 +25,7 @@ from . import config as cfgmod
 
 CHECK_INTERVAL = 6 * 60 * 60      # 正常冷却 6h
 RETRY_INTERVAL = 30 * 60          # 失败后 30min 再试
-STALE_APPLY = 15 * 60             # 更新进程失联超过 15min 视为中断
+STALE_APPLY = 30 * 60             # 更新进程失联超过 30min 视为中断（pip 最长 10min，留足余量）
 GIT_TIMEOUT = 60
 FETCH_TIMEOUT = 20
 PIP_TIMEOUT = 600
@@ -165,15 +165,68 @@ def _conflicted_files():
 
 
 def _smoke() -> tuple[bool, str]:
-    """新代码必须能被导入，否则回滚——不能把起不来的版本当成功。"""
+    """新代码必须能被导入，否则回滚——不能把起不来的版本当成功。
+
+    只 import ai_idm 不够：真正要重启的是 server/cli，这两个的顶层导入也得过。
+    """
+    code = ("import ai_idm, ai_idm.cli, ai_idm.server, ai_idm.updater; "
+            "print(ai_idm.__version__)")
     try:
-        r = _run([sys.executable, "-c", "import ai_idm; print(ai_idm.__version__)"], 90)
+        r = _run([sys.executable, "-c", code], 90)
     except subprocess.TimeoutExpired:
         return False, "新版本导入检查超时"
     if r.returncode != 0:
         out = (r.stderr or r.stdout or "").strip().splitlines()
         return False, f"新版本导入失败：{out[-1] if out else r.returncode}"
     return True, ""
+
+
+# ---------------------------------------------------------------- 跨进程锁
+
+class UpdateLock:
+    """进程内 _LOCK 管不住 CLI / 服务 / 更新子进程三方，用独占文件再锁一层。"""
+
+    def __init__(self, stale=STALE_APPLY):
+        self.path = home() / "update.lock"
+        self.stale = stale
+        self.acquired = False
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + 3
+        while True:
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                try:
+                    os.write(fd, str(os.getpid()).encode())
+                finally:
+                    os.close(fd)
+                self.acquired = True
+                return self
+            except FileExistsError:
+                try:
+                    age = time.time() - self.path.stat().st_mtime
+                except OSError:
+                    age = 0
+                if age > self.stale:
+                    try:
+                        self.path.unlink()
+                    except OSError:
+                        pass
+                    continue
+                if time.time() >= deadline:
+                    return self
+                time.sleep(0.2)
+            except OSError:
+                return self
+
+    def __exit__(self, *exc):
+        if self.acquired:
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
+        return False
 
 
 def _serve_addr():
@@ -216,12 +269,21 @@ def _clear_stale_apply(st: dict, now: float) -> dict:
     """更新进程被杀后会留下 applying=true，不清掉就永远更新不了。"""
     if not st.get("applying"):
         return st
+    if _lock_fresh():
+        return st
     started = float(st.get("apply_started_at") or 0)
     if started and now - started < STALE_APPLY:
         return st
     log("检测到上次更新中断，解除 applying 锁")
     return write_state(applying=False, error="上次更新中断（进程失联），已解除锁定；"
                                              "如有残留 rebase 会在下次更新时自动清理")
+
+
+def _lock_fresh() -> bool:
+    try:
+        return time.time() - (home() / "update.lock").stat().st_mtime <= STALE_APPLY
+    except OSError:
+        return False
 
 
 def check(force: bool = False) -> dict:
@@ -313,7 +375,9 @@ def _restore(commit: str, branch: str) -> None:
 
 def apply() -> dict:
     """把工作树更新到远端最新；任何一步失败都回滚到旧提交。"""
-    with _LOCK:
+    with _LOCK, UpdateLock() as lk:
+        if not lk.acquired:
+            return {"ok": False, "error": "另一个更新进程正在运行，请稍后再试"}
         return _apply_locked()
 
 
@@ -398,7 +462,9 @@ def _apply_locked() -> dict:
 
 def rollback(commit: str | None = None) -> dict:
     """一键回到上一次更新前的提交（或指定提交）。"""
-    with _LOCK:
+    with _LOCK, UpdateLock() as lk:
+        if not lk.acquired:
+            return {"ok": False, "error": "另一个更新进程正在运行，请稍后再试"}
         return _rollback_locked(commit)
 
 
@@ -418,8 +484,12 @@ def _rollback_locked(commit: str | None) -> dict:
     r = _git("reset", "--hard", target)
     if r.returncode != 0:
         return {"ok": False, "error": "回滚失败"}
+    warn = ""
     if _pyproject_changed(old, target):
-        _pip_install()
+        ok, err = _pip_install()
+        if not ok:
+            warn = err
+            log(f"回滚后重装依赖失败：{err}")
     ext_ok, ext_msg = _sync_extension()
     ref = _remote_ref()
     ahead, behind = _counts(ref)
@@ -427,9 +497,11 @@ def _rollback_locked(commit: str | None) -> dict:
                 local_commit=_head(), local_version=_show_version("HEAD", "ai_idm/__init__.py"),
                 local_ext_version=_show_version("HEAD", "browser-extension/manifest.json"),
                 last_apply={"ok": True, "at": time.time(), "from": old, "to": target,
-                            "rollback": True, "ext_ok": ext_ok})
+                            "rollback": True, "ext_ok": ext_ok, "pip_error": warn})
     log(f"手动回滚：{old[:8]} -> {target[:8]}")
-    return {"ok": True, "from": old, "to": target, "detail": ext_msg}
+    detail = "；".join(x for x in (ext_msg, warn) if x)
+    return {"ok": True, "from": old, "to": target, "detail": detail,
+            "warning": warn or None}
 
 
 # ---------------------------------------------------------------- 进程

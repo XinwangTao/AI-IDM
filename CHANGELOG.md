@@ -6,6 +6,15 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.15.2] - 2026-11-05
+
+### Fixed
+- **跨进程互斥。** 进程内锁管不住 CLI / 服务 / 更新子进程三方，两个入口同时点更新会并发
+  改工作树；新增 `AI_IDM_HOME/update.lock` 独占文件锁，第二方直接拒绝。
+- **冒烟覆盖真正的入口。** 以前只 `import ai_idm`，`server`/`cli` 的顶层导入坏了照样被当成功；
+  现在三个模块都导入一遍。中断判定放宽到 30 分钟（pip 最长 10 分钟，留余量）。
+- **回滚后的依赖重装失败不再被吞掉**，记日志并在结果里给出 `warning`。
+
 ## [1.15.1] - 2026-11-05
 
 ### Fixed

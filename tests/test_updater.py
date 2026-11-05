@@ -52,6 +52,9 @@ def main():
     git("checkout", "-q", "-b", "main")
 
     write("ai_idm/__init__.py", version_file("1.0.0"))
+    # 冒烟会 import 这些模块，fixture 里必须有
+    for name in ("cli.py", "server.py", "updater.py"):
+        write(f"ai_idm/{name}", "# fixture\n")
     write("browser-extension/manifest.json", '{\n  "version": "1.0.0"\n}\n')
     write("pyproject.toml", '[project]\nname = "ai-idm"\nversion = "1.0.0"\n')
     git("add", "-A")
@@ -118,6 +121,14 @@ def main():
     st = updater.check(force=True)
     results.append(("stale-apply-cleared",
                     st.get("applying") is False, st.get("error")))
+
+    # 另一个更新进程持锁时必须拒绝（跨进程锁）
+    lock = updater.home() / "update.lock"
+    lock.write_text("999999", encoding="utf-8")
+    res = updater.apply()
+    results.append(("apply-refuse-locked",
+                    res.get("ok") is False and "另一个更新进程" in str(res.get("error")), res))
+    lock.unlink()
 
     print("\n=== 结果 ===")
     allok = True
