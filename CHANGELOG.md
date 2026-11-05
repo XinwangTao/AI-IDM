@@ -6,6 +6,28 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.15.4] - 2026-11-05
+
+### Fixed
+- **续传会跳过从未落盘的字节。** 状态文件还在、但 `.idmpart` 临时文件丢失或被截短时，
+  旧的 `done` 计数会让下载器跳过那些数据，产出"大小对、内容坏"的文件。现在续传前
+  必须证明临时文件存在且不小于总长、分片覆盖完整，否则整包重下。
+- **HLS 分片崩溃留下半截文件。** AES 分片改为先写 `.part` 再原子改名；下次不会把半截
+  分片当成"已完成"。
+- **HLS/整取漏了重试。** 播放列表、密钥、分片、以及不支持 Range 的整取路径都接入
+  429/5xx 指数退避（原来直接失败）。
+- **Windows 目标被占用时搬运失败。** `os.replace` 遇到 PermissionError 重试 6 次
+  （杀软/播放器短暂占用很常见）。
+- **服务端/队列下载忽略部分配置。** timeout、max_retries、verify_sample、seam_verify、
+  open_range 现在与 CLI 一样生效；FTP 任务也传入超时与重试；HLS 任务使用请求里的并发数，
+  且未指定文件名时落到下载目录而不是进程当前目录。
+- **SQLite 并发。** 队列库启用 WAL + busy_timeout=10s，serve/queue run/CLI 同时开库不再
+  容易 "database is locked"；删掉 `Runner.stop` 的重复定义。
+
+### Changed
+- 进度回调从每 64KB 一次降到最多 10Hz（状态切换仍强制推送），高带宽下减少无谓快照与
+  数据库写；实测持续下载约 7 次/秒，64MB 未节流本应约 1000 次，UI 刷新节奏不受影响。
+
 ## [1.15.3] - 2026-11-05
 
 ### Changed

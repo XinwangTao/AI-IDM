@@ -547,7 +547,8 @@ class TakeoverServer:
                 prefer_hls = bool(p.get("hls")) or url.lower().split("?")[0].endswith(".m3u8")
 
                 if prefer_hls:
-                    task = app.start_hls(url, name, headers, p.get("proxy") or None)
+                    task = app.start_hls(url, name, headers, p.get("proxy") or None,
+                                         connections=r["connections"])
                     return self._json(200, {"ok": True, **task})
 
                 prio = int(p.get("priority") or 0)
@@ -727,7 +728,7 @@ class TakeoverServer:
 
     # ---------- HLS ----------
 
-    def start_hls(self, url, name, headers, proxy):
+    def start_hls(self, url, name, headers, proxy, connections=None):
         from .hls import download_hls
 
         tid = "hls-" + secrets.token_hex(5)
@@ -741,6 +742,8 @@ class TakeoverServer:
         def worker():
             try:
                 res = download_hls(url, dest, headers=headers, proxy=proxy,
+                                   connections=int(connections or 8),
+                                   dest_dir=self.download_dir,
                                    progress=lambda d, t: rec.update(
                                        downloaded=d, total=t,
                                        percent=round(d / t * 100, 2) if t else 0))

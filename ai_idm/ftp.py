@@ -18,7 +18,7 @@ import threading
 import time
 from urllib.parse import unquote, urlsplit
 
-from .engine import DownloadError, plan_segments
+from .engine import DownloadError, Segment, plan_segments
 
 
 class FtpError(DownloadError):
@@ -146,8 +146,20 @@ class FtpDownload:
             return False
         if self.total and st.get("total") and st["total"] != self.total:
             return False
-        self.segments = [plan_segments(self.total, 1)[0].__class__(
-            s["i"], s["s"], s["e"], s.get("d", 0)) for s in st["segments"]]
+        # 与 engine 相同的保护：临时文件不在/被截短时，续传会跳过从未落盘的字节
+        if not self.total:
+            return False
+        try:
+            if os.path.getsize(self.dest + ".idmpart") < self.total:
+                return False
+        except OSError:
+            return False
+        segs = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st.get("segments") or []]
+        if not segs or sum(s.size for s in segs) != self.total:
+            return False
+        if any(s.done > s.size for s in segs):
+            return False
+        self.segments = segs
         return True
 
     def _write_at(self, pos, data):

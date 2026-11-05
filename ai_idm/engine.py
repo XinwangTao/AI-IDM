@@ -181,6 +181,18 @@ def _open_with_retry(opener, req, timeout, max_retries=4):
     raise last
 
 
+def _replace_file(src, dst, attempts=6):
+    """Windows 上目标文件可能被杀软/播放器短暂占用，重试几次再报错。"""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.15 * (i + 1))
+
+
 def probe(url, headers=None, proxy=None, insecure=False, timeout=30):
     hdrs = {"User-Agent": DEFAULT_UA}
     if headers:
@@ -424,6 +436,7 @@ class Download:
         self.seams_checked = 0
         self.seams_mismatched = 0
         self._last_save = 0.0
+        self._last_emit = 0.0
 
     # ---------------- 状态文件 ----------------
 
@@ -472,8 +485,23 @@ class Download:
             return False
         if p and p.last_modified and st.get("last_modified") and st["last_modified"] != p.last_modified:
             return False
+        # 续传必须能证明已下数据还在盘上：临时文件缺失或被截短时，
+        # 计划的 done 会跳过那些从未落盘的字节，最终得到一个"大小对、内容坏"的文件。
+        if not p or not p.total:
+            return False
+        temp = self.dest + ".idmpart"
+        try:
+            if os.path.getsize(temp) < p.total:
+                return False
+        except OSError:
+            return False
+        segs = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st.get("segments") or []]
+        if not segs or sum(s.size for s in segs) != p.total:
+            return False
+        if any(s.done > s.size for s in segs):
+            return False
         self.total = st.get("total") or self.total
-        self.segments = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st["segments"]]
+        self.segments = segs
         return True
 
     # ---------------- 进度 ----------------
@@ -504,7 +532,13 @@ class Download:
             "pool": self._pool.stats if self._pool is not None else None,
         }
 
-    def _emit(self):
+    def _emit(self, force=False):
+        # 每 64KB 回调一次会让服务端/扩展每秒收到上千次快照，纯属浪费；
+        # 10Hz 足够 UI 平滑，状态切换时用 force=True 保证不丢事件。
+        now = time.monotonic()
+        if not force and now - self._last_emit < 0.1:
+            return
+        self._last_emit = now
         if self.progress_cb:
             try:
                 self.progress_cb(self.snapshot())
@@ -904,13 +938,13 @@ class Download:
 
             if self._pool is not None:
                 self._pool.close()
-            os.replace(self._temp_path, self.dest)   # 原子搬运
+            _replace_file(self._temp_path, self.dest)   # 原子搬运（带 Windows 占用重试）
             self._temp_path = None
             self.status = "done"
             self.finished_at = time.time()
             self.speed = 0.0
             self.done = written or size
-            self._emit()
+            self._emit(force=True)
             if self._state_path and os.path.exists(self._state_path):
                 os.remove(self._state_path)
 
@@ -931,7 +965,7 @@ class Download:
             self.error = self.error or str(e)
             self.speed = 0.0
             self._save_state(force=True)
-            self._emit()
+            self._emit(force=True)
             if self._fh is not None:
                 try:
                     self._fh.close()
@@ -1022,13 +1056,13 @@ class Download:
                     self.total = pos      # 采信实际字节数（服务器 Content-Length 差 1 的 quirk）
                 else:
                     raise DownloadError(f"未完成: {pos}/{total} 字节")
-            os.replace(self._temp_path, self.dest)
+            _replace_file(self._temp_path, self.dest)
             self._temp_path = None
             self.status = "done"
             self.finished_at = time.time()
             self.speed = 0.0
             self.done = pos
-            self._emit()
+            self._emit(force=True)
             result = self.snapshot()
             result["elapsed_sec"] = round(self.finished_at - self.started_at, 2)
             if self.verify:
@@ -1058,7 +1092,7 @@ class Download:
         h.update(self.headers)
         req = urllib.request.Request(self.url, headers=h, method="GET")
         pos = 0
-        with opener.open(req, timeout=self.timeout) as resp:
+        with _open_with_retry(opener, req, self.timeout, self.max_retries) as resp:
             while not self._stop.is_set():
                 chunk = resp.read(CHUNK)
                 if not chunk:

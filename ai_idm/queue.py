@@ -56,6 +56,13 @@ class Queue:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # serve / queue run / CLI 可能同时开库：WAL + busy_timeout 避免 "database is locked"
+        for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL",
+                       "PRAGMA busy_timeout=10000"):
+            try:
+                self._conn.execute(pragma)
+            except sqlite3.Error:
+                pass
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
@@ -246,9 +253,6 @@ class Runner:
         dl.cancel()
         return True
 
-    def stop(self):
-        self._stop.set()
-
     def run(self, idle_exit=True):
         self.q.reset_running()
         threads = [threading.Thread(target=self._worker, args=(idle_exit,), daemon=True)
@@ -280,7 +284,8 @@ class Runner:
         if is_ftp:
             from .ftp import FtpDownload
             dl = FtpDownload(task["url"], dest=task.get("dest"),
-                             connections=r["connections"])
+                             connections=r["connections"],
+                             timeout=r["timeout"], max_retries=r["max_retries"])
             try:
                 result = dl.run()
                 self.q.update(tid, status="done", dest=result.get("dest"),
@@ -302,7 +307,12 @@ class Runner:
             limit_bps=r["limit_bps"],
             headers=task.get("headers") or {},
             proxy=r["proxy"],
+            timeout=r["timeout"],
+            max_retries=r["max_retries"],
             schedule=cfg.get("speed_schedule") or [],
+            verify_sample=int(cfg.get("verify_sample") or 0),
+            verify_seam=bool(cfg.get("seam_verify", True)),
+            open_range=bool(cfg.get("open_range", False)),
             dynamic_chunks=bool(cfg.get("dynamic_chunks", True)),
             keepalive=bool(cfg.get("keepalive", True)),
             dest_dir=self.dest_dir,
