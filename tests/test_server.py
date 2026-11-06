@@ -237,8 +237,9 @@ def main():
                     {"inside": c15, "outside": c16, "no_token": c17,
                      "no_path": c18, "opened": len(opened)}))
 
-    # ---- 10. /batch：后台批量任务 + 进度查询 ----
-    batch_urls = [f"{url.rsplit('/', 1)[0]}/b{i}.bin" for i in range(3)]
+    # ---- 10. /batch：后台批量任务 + 进度查询（重复 URL 会去重） ----
+    base_url = url.rsplit("/", 1)[0]
+    batch_urls = [f"{base_url}/b0.bin", f"{base_url}/b0.bin", f"{base_url}/b1.bin"]
     c19, d19 = call(base, "/batch", {"urls": batch_urls}, token=token)
     job = None
     for _ in range(100):
@@ -247,10 +248,10 @@ def main():
         job = st.get("job")
         if job and job.get("status") in ("done", "cancelled", "error"):
             break
-    have_files = all(os.path.exists(os.path.join(dl_dir, f"b{i}.bin")) for i in range(3))
+    have_files = all(os.path.exists(os.path.join(dl_dir, f"b{i}.bin")) for i in range(2))
     results.append(("batch-job",
-                    c19 == 200 and d19.get("total") == 3 and job is not None
-                    and job.get("status") == "done" and job.get("done") == 3
+                    c19 == 200 and d19.get("total") == 2 and job is not None
+                    and job.get("status") == "done" and job.get("done") == 2
                     and have_files,
                     {"http": c19, "total": d19.get("total"),
                      "status": job and job.get("status"),

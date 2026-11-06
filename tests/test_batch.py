@@ -23,6 +23,7 @@ from ai_idm.batch import dest_for, read_urls, run_batch  # noqa: E402
 N = 60
 SIZE = 20 * 1024
 FILES = [bytes([i % 251]) * SIZE for i in range(N)]
+SAME = {"/a/x.bin": b"A" * 3000, "/b/x.bin": b"B" * 4000}
 STATE = {"inflight": 0, "peak": 0, "requests": 0, "flaky": 2, "bad_ok": False}
 LOCK = threading.Lock()
 
@@ -42,6 +43,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return b"", STATE["bad_ok"]
         if p == "/img":
             return b"\x89PNG\r\n\x1a\n" + b"0" * 100, True
+        if p in SAME:
+            return SAME[p], True
         if p.startswith("/f") and p.endswith(".bin"):
             return FILES[int(p[2:-4])], True
         return b"", False
@@ -136,6 +139,17 @@ def main():
     results.append(("reserved-names",
                     reserved[0] == "_CON" and reserved[1] == "_NUL.txt" and reserved[2] == "_",
                     {"got": reserved}))
+
+    # 同批次同名文件并发：必须各自完整，不能互相覆盖
+    out_same = os.path.join(work, "same")
+    s_same = run_batch([f"{base}/a/x.bin", f"{base}/b/x.bin"], out_same,
+                       concurrency=4, per_host=4, dirs=False)
+    names = sorted(n for n in os.listdir(out_same) if n.endswith(".bin"))
+    contents = {open(os.path.join(out_same, n), "rb").read() for n in names}
+    results.append(("same-name-race",
+                    s_same["done"] == 2 and len(names) == 2
+                    and contents == {SAME["/a/x.bin"], SAME["/b/x.bin"]},
+                    {"names": names, "done": s_same["done"]}))
 
     # CLI 入口
     import json
