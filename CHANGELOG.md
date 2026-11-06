@@ -6,6 +6,38 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.17.2] - 2026-11-06
+
+### Fixed
+- **批量路径会写进 Windows 设备。** URL 末段是 `CON` / `NUL` / `COM1`… 时会被当成设备名；
+  现在统一加前缀（`_CON`），同时清理控制字符和结尾的点/空格。
+- **批量 Ctrl+C 停不下来。** 以前要等所有任务跑完；现在会取消正在下载的文件与未开始的任务，
+  已完成文件保留，重跑加 `--resume` 即可续。
+
+### Added
+- URL 没有扩展名时按响应 `Content-Type` 推断（`image/png` → `.png`、`application/pdf` → `.pdf` 等），
+  批量不再把 CDN 链接全存成 `.bin`。
+
+## [1.17.1] - 2026-11-06
+
+### Changed
+- **小文件减去两处固定开销。** 小于 1MB 的文件不再创建进度监控线程、不再逐文件 `fsync`；
+  两者各占几毫秒，在几百个文件的批量里会被放大。批量引擎吞吐从约 700 提升到 810 文件/秒
+  （本机回环，200×20KB）。
+
+### Benchmark（SOTA 对比，同一台本机 HTTP 服务器，200×20KB，3 次中位数）
+| 工具 | 耗时 | 文件/秒 | 每文件请求 |
+|---|---|---|---|
+| **ai-idm 引擎（per-host 8）** | **0.25s** | **811** | 1 |
+| ai-idm 引擎（默认 per-host 6） | 0.27s | 737 | 1 |
+| curl 8.18 `--parallel 16` | 0.64–0.79s | 254–311 | 1 |
+| aria2 1.37 `-j16 -x1` | 2.7–3.4s | 59–74 | 1 |
+| aria2 1.37 `-j1`（串行） | 3.2–3.9s | 51–62 | 1 |
+
+CLI 端到端（含解释器启动）1.0–1.8s；本机 Python 冷启动实测 0.8s，是 CLI 总时长的主要组成。
+结论：HTTP/1.1 + keep-alive 下引擎吞吐约为 curl 的 2.4 倍、aria2 的 10 倍；与 wget2 的差距
+只剩 HTTP/2 多路复用（标准库不支持，本轮未测）。
+
 ## [1.17.0] - 2026-11-06
 
 ### Added

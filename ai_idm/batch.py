@@ -16,13 +16,18 @@ import os
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import unquote, urlsplit
 
 from .engine import Download
 from .pool import Pool
 
 MAX_URLS = 100_000
+RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
 
 
 def read_urls(source):
@@ -46,9 +51,13 @@ def read_urls(source):
 
 
 def _safe_segment(name):
-    name = name.replace("\\", "_").replace("/", "_").strip()
+    name = "".join(ch for ch in name if ch >= " ").replace("\\", "_").replace("/", "_")
+    name = name.strip().rstrip(". ")
     if name in ("", ".", ".."):
         return "_"
+    # Windows 设备名（CON/NUL/COM1…）不能当文件名，否则会写进设备
+    if name.split(".")[0].upper() in RESERVED_NAMES:
+        name = "_" + name
     return name
 
 
@@ -97,6 +106,8 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
     pool = Pool(proxy, insecure, timeout)
     started = time.time()
     bytes_done = [0]
+    active = {}                     # url -> Download，用于 Ctrl+C 时真正停下
+    active_lock = threading.Lock()
 
     def host_sem(host):
         with host_lock:
@@ -129,7 +140,13 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
             dl = Download(url, dest=dest, connections=1, timeout=timeout,
                           max_retries=max_retries, proxy=proxy, insecure=insecure,
                           unique=not overwrite, pool=pool, single_request=True)
-            r = dl.run()
+            with active_lock:
+                active[url] = dl
+            try:
+                r = dl.run()
+            finally:
+                with active_lock:
+                    active.pop(url, None)
             return {"url": url, "dest": r.get("dest") or dest, "status": "done",
                     "bytes": r.get("downloaded") or 0}
         except Exception as e:                                 # noqa: BLE001
@@ -151,10 +168,28 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
                 pass
         return res
 
+    ex = ThreadPoolExecutor(max_workers=max(1, concurrency))
+    futures = [ex.submit(wrapped, url) for url in urls]
     try:
-        with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
-            list(ex.map(wrapped, urls))
-    finally:
+        for _ in as_completed(futures):
+            pass
+    except KeyboardInterrupt:
+        # Ctrl+C：先让正在跑的文件停下来，再取消还没开始的
+        stop_event.set()
+        with active_lock:
+            running = list(active.values())
+        for dl in running:
+            try:
+                dl.cancel()
+            except Exception:                                  # noqa: BLE001
+                pass
+        for f in futures:
+            f.cancel()
+        ex.shutdown(wait=False, cancel_futures=True)
+        pool.close()
+        raise
+    else:
+        ex.shutdown(wait=True)
         pool.close()
 
     elapsed = max(0.001, time.time() - started)

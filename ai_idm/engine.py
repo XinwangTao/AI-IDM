@@ -35,6 +35,24 @@ DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.12"
 SIZE_TOLERANCE = 1
 DEFAULT_CONNECTIONS = 8
 
+# 批量模式跳过 HEAD，URL 又没有扩展名时（CDN 常见 /download?id=1），
+# 用响应头 Content-Type 猜一个扩展名，避免所有文件都叫 *.bin。
+MIME_EXT = {
+    "text/html": ".html", "text/plain": ".txt", "text/css": ".css",
+    "application/json": ".json", "application/javascript": ".js",
+    "text/javascript": ".js", "application/pdf": ".pdf", "application/zip": ".zip",
+    "application/xml": ".xml", "text/xml": ".xml", "text/csv": ".csv",
+    "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+    "image/webp": ".webp", "image/svg+xml": ".svg", "image/avif": ".avif",
+    "video/mp4": ".mp4", "video/webm": ".webm", "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg", "font/woff2": ".woff2",
+}
+
+
+def _mime_ext(content_type):
+    ct = (content_type or "").split(";")[0].strip().lower()
+    return MIME_EXT.get(ct, "")
+
 # GitHub「下载加速」镜像站：它们按**请求数**限流（429 + Retry-After），
 # 并发多连接必然触发限流，所以对这些域名强制单连接串行取流。
 GITHUB_MIRROR_HOSTS = frozenset({
@@ -1144,6 +1162,12 @@ class Download:
                         and not os.path.dirname(self.dest)):
                     self.dest = os.path.join(self.dest_dir, self.dest)
                 self.dest = os.path.abspath(self.dest)
+                base = os.path.basename(self.dest)
+                ext = os.path.splitext(base)[1].lower()
+                if ext == "" or base in ("download.bin", "index.bin"):
+                    guess = _mime_ext(resp.headers.get("Content-Type"))
+                    if guess and guess != ext:
+                        self.dest = (self.dest[:-len(ext)] if ext else self.dest) + guess
                 if self.unique:
                     new_dest = unique_path(self.dest)
                     if new_dest != self.dest:
@@ -1155,8 +1179,12 @@ class Download:
                 self._temp_path = self.dest + ".idmpart"
 
                 pos = 0
-                mon = threading.Thread(target=self._monitor, daemon=True)
-                mon.start()
+                # 小文件起监控线程 + fsync 是纯开销：线程创建和磁盘同步各占几毫秒，
+                # 批量下载几百个 20KB 文件时会被放大成主要成本。
+                big = (total == 0 or total >= (1 << 20))
+                mon = threading.Thread(target=self._monitor, daemon=True) if big else None
+                if mon is not None:
+                    mon.start()
                 with open(self._temp_path, "wb") as fh:
                     self._fh = fh
                     while not self._stop.is_set():
@@ -1170,10 +1198,12 @@ class Download:
                             self.done = pos
                         self._emit()
                     fh.flush()
-                    os.fsync(fh.fileno())
+                    if big:
+                        os.fsync(fh.fileno())
                 self._fh = None
-                self._monitor_stop.set()
-                mon.join(timeout=1)
+                if mon is not None:
+                    self._monitor_stop.set()
+                    mon.join(timeout=1)
 
                 if total and pos != total:
                     if abs(pos - total) <= SIZE_TOLERANCE:

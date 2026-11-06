@@ -40,6 +40,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return FILES[0], True
         if p == "/bad.bin":
             return b"", STATE["bad_ok"]
+        if p == "/img":
+            return b"\x89PNG\r\n\x1a\n" + b"0" * 100, True
         if p.startswith("/f") and p.endswith(".bin"):
             return FILES[int(p[2:-4])], True
         return b"", False
@@ -70,6 +72,8 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Accept-Ranges", "bytes")
+            if self.path == "/img":
+                self.send_header("Content-Type", "image/png")
             self.end_headers()
             self.wfile.write(body)
         finally:
@@ -117,6 +121,21 @@ def main():
                     dedupe["unique"] == len(urls)
                     and dedupe["dest"].endswith(os.path.join("127.0.0.1", "f0.bin")),
                     dedupe))
+
+    # Content-Type 推断扩展名（URL 无扩展名）
+    img_dir = os.path.join(work, "imgout")
+    s_img = run_batch([f"{base}/img"], img_dir, concurrency=2, per_host=2)
+    img_path = os.path.join(img_dir, "127.0.0.1", "img.png")
+    results.append(("mime-ext", s_img["done"] == 1 and os.path.exists(img_path),
+                    {"done": s_img["done"], "exists": os.path.exists(img_path)}))
+
+    # Windows 保留名不能当文件名
+    reserved = [os.path.basename(dest_for("http://example.com/CON", work)),
+                os.path.basename(dest_for("http://example.com/NUL.txt", work)),
+                os.path.basename(dest_for("http://example.com/a/..", work))]
+    results.append(("reserved-names",
+                    reserved[0] == "_CON" and reserved[1] == "_NUL.txt" and reserved[2] == "_",
+                    {"got": reserved}))
 
     # CLI 入口
     import json

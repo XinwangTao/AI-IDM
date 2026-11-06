@@ -238,13 +238,19 @@ def cmd_batch(args):
 
     if not args.quiet:
         print(f"共 {len(urls)} 个 URL；并发 {concurrency}，每站 {per_host}，输出 {out_dir}")
-    summary = batchmod.run_batch(
-        urls, out_dir, concurrency=concurrency, per_host=per_host,
-        resume=args.resume, dirs=not args.flat, overwrite=args.overwrite,
-        proxy=cfg.get("proxy"), insecure=args.insecure,
-        timeout=int(cfg.get("timeout") or 30),
-        max_retries=int(cfg.get("max_retries") or 4),
-        progress=progress, quiet=args.quiet)
+    try:
+        summary = batchmod.run_batch(
+            urls, out_dir, concurrency=concurrency, per_host=per_host,
+            resume=args.resume, dirs=not args.flat, overwrite=args.overwrite,
+            proxy=cfg.get("proxy"), insecure=args.insecure,
+            timeout=int(cfg.get("timeout") or 30),
+            max_retries=int(cfg.get("max_retries") or 4),
+            progress=progress, quiet=args.quiet)
+    except KeyboardInterrupt:
+        if not args.quiet:
+            sys.stderr.write("\r" + " " * 90 + "\n")
+        print("已中止：已完成的文件保留；重跑时加 --resume 只补缺失/失败")
+        return 130
     if not args.quiet:
         sys.stderr.write("\r" + " " * 90 + "\r")
         sys.stderr.flush()
