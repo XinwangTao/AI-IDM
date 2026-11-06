@@ -6,6 +6,102 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.16.0] - 2026-11-06
+
+### Changed
+- **同名文件不再静默覆盖。** HTTP/FTP/HLS 落地时目标已存在就自动改名为 `name (1).ext`；
+  CLI 用 `--overwrite` 关掉。续传（有分片状态/工作目录）仍沿用原文件名。
+- **HLS 分片按清单指纹复用。** 分片地址、密钥或 init 任一变化就会作废旧分片重下，
+  避免换片源后把旧内容拼进新文件。
+- **429 自适应并发。** 服务端限流时把有效并发减半（只降不升，下限 1），不再只靠硬编码
+  镜像名单；快照新增 `connection_cap` / `adaptive_downs`。
+- **面板令牌不再走 URL 查询。** 打印的链接改为 `#token=` 片段，页面读到后立即存入
+  localStorage 并清掉地址栏；`?token=` 仍兼容旧链接。
+- 连接池路径上的 4xx/5xx 会如实报出状态码并遵循 `Retry-After`（以前被当成"连接提前结束"）。
+
+### Added
+- `tests/test_adaptive.py`：429 时降并发仍能完整下载。
+- `test_local` 增加同名文件改名、续传缺临时文件用例；`test_hls` 增加清单指纹用例。
+
+## [1.15.4] - 2026-11-05
+
+### Fixed
+- **续传会跳过从未落盘的字节。** 状态文件还在、但 `.idmpart` 临时文件丢失或被截短时，
+  旧的 `done` 计数会让下载器跳过那些数据，产出"大小对、内容坏"的文件。现在续传前
+  必须证明临时文件存在且不小于总长、分片覆盖完整，否则整包重下。
+- **HLS 分片崩溃留下半截文件。** AES 分片改为先写 `.part` 再原子改名；下次不会把半截
+  分片当成"已完成"。
+- **HLS/整取漏了重试。** 播放列表、密钥、分片、以及不支持 Range 的整取路径都接入
+  429/5xx 指数退避（原来直接失败）。
+- **Windows 目标被占用时搬运失败。** `os.replace` 遇到 PermissionError 重试 6 次
+  （杀软/播放器短暂占用很常见）。
+- **服务端/队列下载忽略部分配置。** timeout、max_retries、verify_sample、seam_verify、
+  open_range 现在与 CLI 一样生效；FTP 任务也传入超时与重试；HLS 任务使用请求里的并发数，
+  且未指定文件名时落到下载目录而不是进程当前目录。
+- **SQLite 并发。** 队列库启用 WAL + busy_timeout=10s，serve/queue run/CLI 同时开库不再
+  容易 "database is locked"；删掉 `Runner.stop` 的重复定义。
+
+### Changed
+- 进度回调从每 64KB 一次降到最多 10Hz（状态切换仍强制推送），高带宽下减少无谓快照与
+  数据库写；实测持续下载约 7 次/秒，64MB 未节流本应约 1000 次，UI 刷新节奏不受影响。
+
+## [1.15.3] - 2026-11-05
+
+### Changed
+- **更新期间服务不再中断。** 以前 `/update/apply` 先停服务再更新；现在服务继续跑旧代码，
+  更新完成才通过新增的令牌保护的 `POST /shutdown` 收尾并重启。更新失败时服务完全不受影响。
+- 旧版本没有 `/shutdown` 时，更新器会先确认 `/ping` 是 AI-IDM，再按端口兜底停止一次（仅过渡期）。
+- 扩展弹窗更新横幅支持“正在更新…”状态。
+
+## [1.15.2] - 2026-11-05
+
+### Fixed
+- **跨进程互斥。** 进程内锁管不住 CLI / 服务 / 更新子进程三方，两个入口同时点更新会并发
+  改工作树；新增 `AI_IDM_HOME/update.lock` 独占文件锁，第二方直接拒绝。
+- **冒烟覆盖真正的入口。** 以前只 `import ai_idm`，`server`/`cli` 的顶层导入坏了照样被当成功；
+  现在三个模块都导入一遍。中断判定放宽到 30 分钟（pip 最长 10 分钟，留余量）。
+- **回滚后的依赖重装失败不再被吞掉**，记日志并在结果里给出 `warning`。
+
+## [1.15.1] - 2026-11-05
+
+### Fixed
+- **更新后必须能导入才算成功。** rebase/pip 之后跑一次 `python -c "import ai_idm"`，
+  失败自动回滚——上游一个语法错误不会再让服务起不来还被报成功。
+- **更新进程被强杀不再永久锁死。** `applying` 超过 15 分钟视为中断并解除；
+  上次留下的半截 rebase 会在下次更新时自动 `--abort`（仅当状态文件记为本次更新）。
+- **重启竞态。** `--restart-server` 先等旧进程放开端口再拉起，并确认 `/ping` 恢复；
+  否则单实例保护会让新实例安静退出、服务直接消失。
+- **冲突可诊断。** rebase 失败会列出冲突文件（前 5 个）并回滚。
+- CLI `--apply` 也遵守"有下载任务不更新"；更新后提示运行中的服务仍是旧代码。
+- 检查/安装/回滚加互斥锁，避免 watcher 与请求同时 `git fetch`。
+- 回滚后的 `available` 按实际落后提交数计算，不再硬编码。
+
+## [1.15.0] - 2026-11-05
+
+### Added
+- **整包自动更新（服务端 + 扩展）。** `ai-idm update` 用 `git fetch` 比对远端与本地
+  提交，只提示不自动装；确认后 rebase 到远端、仅当 `pyproject.toml` 变化时才
+  `pip install -e .`、同步 Edge 扩展快照并重启服务。失败自动回滚到旧提交，
+  回滚点先落盘（`AI_IDM_HOME/update_state.json`），日志在 `AI_IDM_HOME/update.log`。
+  检查冷却 6h、失败退避 30min，全程不打扰下载主流程。
+- **服务端 `/update`、`/update/check`、`/update/apply` 接口**（需令牌）；有下载任务在跑时
+  拒绝更新。`ai-idm serve` 常驻时每 30 分钟自查一次，并新增单实例保护（自启+手动
+  同时启动时第二个实例安静退出）。
+- **扩展弹窗新增「服务端更新」横幅**：读本地服务 `/update`，点「更新服务」直接更新并重启。
+  扩展自身的 `latest.json` 检查保留为服务未启动时的兜底。
+- `scripts/install_autostart.py`：登记/移除开机自启（启动文件夹 VBS）。
+  流程图：`docs/archify/ai_idm_auto_update_workflow.html`。
+
+## Extension 1.13.1 - 2026-11-05
+
+### Changed
+- 更新横幅支持“正在更新…”状态（更新期间服务保持在线，完成后再重启）。
+
+## Extension 1.13.0 - 2026-11-05
+
+### Added
+- 弹窗顶部新增服务端/整包更新横幅（唯一真源是本地 `ai-idm serve` 的 `/update`）。
+
 ## Extension 1.12.0 - 2026-10-30
 
 ### Added

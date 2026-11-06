@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -20,7 +22,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin
 
-from .engine import Download, DownloadError, _make_opener, DEFAULT_UA
+from .engine import (Download, DownloadError, _make_opener, _open_with_retry,
+                     _replace_file, unique_path, DEFAULT_UA)
 
 
 class HlsError(RuntimeError):
@@ -235,7 +238,7 @@ def _fetch_text(url, headers, proxy, insecure, timeout=30):
     opener = _make_opener(proxy, insecure)
     req = __import__("urllib.request", fromlist=["Request"]).Request(
         url, headers={"User-Agent": DEFAULT_UA, **(headers or {})})
-    with opener.open(req, timeout=timeout) as r:
+    with _open_with_retry(opener, req, timeout) as r:
         raw = r.read()
         return raw.decode("utf-8", "replace"), r.geturl()
 
@@ -244,13 +247,24 @@ def _fetch_bytes(url, headers, proxy, insecure, timeout=60):
     opener = _make_opener(proxy, insecure)
     req = __import__("urllib.request", fromlist=["Request"]).Request(
         url, headers={"User-Agent": DEFAULT_UA, **(headers or {})})
-    with opener.open(req, timeout=timeout) as r:
+    with _open_with_retry(opener, req, timeout) as r:
         return r.read()
+
+
+def _playlist_fp(media):
+    """清单指纹：分片地址 / 密钥 / init 任一变化，旧分片就不能复用。"""
+    payload = {
+        "init": media.get("init"),
+        "segments": [s["url"] for s in media["segments"]],
+        "keys": [s.get("key") for s in media["segments"]],
+    }
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def download_hls(url, dest, connections=8, quality="best", headers=None,
                  proxy=None, insecure=False, keep_segments=False,
-                 restart=False, progress=None):
+                 restart=False, progress=None, dest_dir=None, unique=True):
     headers = headers or {}
     text, final_url = _fetch_text(url, headers, proxy, insecure)
 
@@ -277,11 +291,41 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
         dest = os.path.basename(final_url.split("?")[0]) or "output.ts"
         if not os.path.splitext(dest)[1]:
             dest += ".ts"
+        if dest_dir:
+            dest = os.path.join(dest_dir, dest)
     dest = os.path.abspath(dest)
     work = dest + ".hlsseg"
+    # 有分片工作目录说明是续传：沿用原文件名。没有才避免覆盖已有成片。
+    if unique and not restart and os.path.exists(dest) and not os.path.isdir(work):
+        dest = unique_path(dest)
+        work = dest + ".hlsseg"
     if restart and os.path.isdir(work):
         shutil.rmtree(work)
     os.makedirs(work, exist_ok=True)
+
+    # 分片只能按同一份清单复用：清单一变（地址/密钥/init），旧分片全部作废
+    fp = _playlist_fp(media)
+    manifest_path = os.path.join(work, "manifest.json")
+    prev_fp = ""
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            prev_fp = str(json.load(f).get("fp") or "")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        prev_fp = ""
+    if prev_fp and prev_fp != fp:
+        for name in os.listdir(work):
+            if name.startswith("seg_"):
+                try:
+                    os.remove(os.path.join(work, name))
+                except OSError:
+                    pass
+    try:
+        tmp_manifest = manifest_path + ".tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as f:
+            json.dump({"fp": fp, "url": final_url}, f)
+        _replace_file(tmp_manifest, manifest_path)
+    except OSError:
+        pass
 
     key_cache = {}
     seg_paths = [os.path.join(work, f"seg_{i:05d}.bin") for i in range(len(segs))]
@@ -312,8 +356,11 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
                 iv = struct.pack(">QQ", 0, seg["seq"])
             blob = _fetch_bytes(seg["url"], headers, proxy, insecure, 120)
             blob = aes128_cbc_decrypt(key, iv, blob)
-            with open(path, "wb") as f:
+            # 先写 .part 再改名：崩溃留下的半截文件不会被下次当成"已完成分片"
+            tmp = path + ".part"
+            with open(tmp, "wb") as f:
                 f.write(blob)
+            _replace_file(tmp, path)
         else:
             # 复用分片下载器（单连接，单片内部不分段）
             Download(seg["url"], dest=path, connections=1, headers=headers,
@@ -344,7 +391,7 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
         for p in seg_paths:
             with open(p, "rb") as f:
                 shutil.copyfileobj(f, out, 1 << 20)
-    os.replace(tmp_out, dest)
+    _replace_file(tmp_out, dest)
 
     size = os.path.getsize(dest)
     if not keep_segments:

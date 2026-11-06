@@ -47,6 +47,35 @@ function renderUpdate(st) {
   box.classList.add("show");
 }
 
+/* 服务端/整包更新：唯一真源是本地 serve 的 /update，扩展不自作主张。
+ * 有新版才显示；点「更新服务」= 让服务端起一个更新进程并重启。 */
+function renderAppUpdate(st) {
+  const box = $("#appupd");
+  if (!box) return;
+  const applying = !!(st && st.applying);
+  const show = !!(st && (applying || st.available));
+  if (!show) { box.classList.remove("show"); return; }
+  const link = $("#appupd-go");
+  if (applying) {
+    $("#appupd-txt").textContent = "正在更新，完成后服务会自动重启…";
+    link.style.display = "none";
+  } else {
+    $("#appupd-txt").textContent =
+      `服务端 v${st.local_version || "?"} → v${st.remote_version || "?"}`
+      + (st.behind ? ` · ${st.behind} 个新提交` : "");
+    link.style.display = "";
+  }
+  box.classList.add("show");
+}
+
+async function loadAppUpdate() {
+  try {
+    renderAppUpdate(await api("/update", { timeout: 2500 }));
+  } catch (_) {
+    renderAppUpdate(null);          // 服务不在或令牌错：不显示，不打扰
+  }
+}
+
 const rowMap = new Map();   // id -> { el, nm, bar, pct, btn, st }
 const busy = new Set();     // 已点「取消/移除」、等结果的 id
 
@@ -224,6 +253,21 @@ $("#upd-x").addEventListener("click", async (e) => {
   chrome.runtime.sendMessage({ type: "refreshBadge" }).catch(() => {});
 });
 
+$("#appupd-go").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const txt = $("#appupd-txt");
+  txt.textContent = "正在启动更新…";
+  try {
+    const r = await api("/update/apply", { method: "POST", timeout: 8000 });
+    txt.textContent = r && r.ok
+      ? "更新中，服务会短暂重启，稍后重新打开弹窗"
+      : ((r && r.error) || "更新失败");
+    if (r && r.ok) $("#dot").className = "dot off";
+  } catch (err) {
+    txt.textContent = "更新失败：" + (err.message || err);
+  }
+});
+
 // 列表用事件委托：行会复用，监听器必须挂在容器上
 $("#rows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button.act");
@@ -262,6 +306,7 @@ $("#rows").addEventListener("click", async (e) => {
   chrome.runtime.sendMessage({ type: "checkUpdate" })
     .then((st) => { if (st) renderUpdate(st); })
     .catch(() => { /* worker 没响应：保留上次状态 */ });
+  loadAppUpdate();                                      // 服务端更新：查一次，不阻塞首屏
   await refresh();
   setInterval(refresh, REFRESH_MS);
 })();

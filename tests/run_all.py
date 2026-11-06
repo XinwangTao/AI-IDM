@@ -33,6 +33,8 @@ TESTS = [
     "test_server",       # 浏览器接管服务：鉴权 / 入队 / 路径穿越 / 取消
     "test_mirror",       # 镜像站单请求整取（不 HEAD、不发 Range）
     "test_dedup_purge",  # /add 去重 / 队列清理 / ±1 字节容错
+    "test_updater",      # 更新检查 / 脏工作区拒绝 / 更新 / 回滚
+    "test_adaptive",     # 429 时自适应降并发
 ]
 
 

@@ -129,7 +129,10 @@ def main():
     dl = FtpDownload(url, dest=dest2, connections=2)
     t = threading.Thread(target=lambda: dl.run(), daemon=True)
     t.start()
-    time.sleep(0.9)
+    # 等第一块数据真正落盘再取消：固定 sleep 在机器忙时会太短（partial=0 的假失败）
+    deadline = time.time() + 8
+    while time.time() < deadline and dl.done == 0 and t.is_alive():
+        time.sleep(0.05)
     dl.cancel()
     t.join(15)
     part = dl.snapshot()

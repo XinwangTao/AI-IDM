@@ -479,6 +479,8 @@ class TakeoverServer:
                     c["download_dir"] = app.download_dir
                     c["server_port"] = app.port
                     return self._json(200, {"ok": True, "config": c})
+                if path == "/update":
+                    return self._json(200, app.update_status())
                 if path == "/add":
                     return self._handle_add({k: v[0] for k, v in qs.items()})
                 return self._json(404, {"ok": False, "error": "未知接口"})
@@ -502,6 +504,20 @@ class TakeoverServer:
                     return self._json(200, {"ok": ok})
                 if path == "/reveal":
                     return self._handle_reveal(payload)
+                if path == "/update/check":
+                    return self._json(200, app.update_check())
+                if path == "/update/apply":
+                    code, obj = app.update_apply()
+                    return self._json(code, obj)
+                if path == "/shutdown":
+                    # 只给本地更新器收尾用；有任务在跑就拒绝，避免打断下载
+                    active = app.active_downloads()
+                    if active:
+                        return self._json(409, {"ok": False,
+                                                "error": f"还有 {active} 个任务在跑"})
+                    self._json(200, {"ok": True})
+                    threading.Timer(0.5, app.stop).start()
+                    return
                 return self._json(404, {"ok": False, "error": "未知接口"})
 
             # --- 业务 ---
@@ -531,7 +547,8 @@ class TakeoverServer:
                 prefer_hls = bool(p.get("hls")) or url.lower().split("?")[0].endswith(".m3u8")
 
                 if prefer_hls:
-                    task = app.start_hls(url, name, headers, p.get("proxy") or None)
+                    task = app.start_hls(url, name, headers, p.get("proxy") or None,
+                                         connections=r["connections"])
                     return self._json(200, {"ok": True, **task})
 
                 prio = int(p.get("priority") or 0)
@@ -667,9 +684,51 @@ class TakeoverServer:
         return {"ok": True, "tasks": rows, "stats": self.q.stats(),
                 "download_dir": self.download_dir, "version": __version__}
 
+    # ---------- 更新（服务端 + 扩展） ----------
+
+    def active_downloads(self):
+        """正在跑的任务数：有任务时不允更新（重启会打断下载）。"""
+        running = self.q.stats().get("running", {}).get("count", 0)
+        with self._hls_lock:
+            hls = sum(1 for h in self.hls_tasks.values() if h.get("status") == "running")
+        return int(running) + hls
+
+    def update_status(self):
+        from . import updater
+        st = updater.read_state()
+        return {"ok": True, **st, "active_downloads": self.active_downloads()}
+
+    def update_check(self):
+        from . import updater
+        st = updater.check(force=True)
+        return {"ok": True, **st, "active_downloads": self.active_downloads()}
+
+    def update_apply(self):
+        """确认后安装：起一个脱离服务的更新进程，然后本服务退出。"""
+        from . import updater
+        st = updater.read_state()
+        if st.get("applying"):
+            return 409, {"ok": False, "error": "已有更新在进行中"}
+        active = self.active_downloads()
+        if active:
+            return 409, {"ok": False,
+                         "error": f"还有 {active} 个下载任务在跑，完成后再更新"}
+        if not st.get("available"):
+            st = updater.check(force=True)
+            if not st.get("available"):
+                return 200, {"ok": False, "error": st.get("error") or "已是最新版本"}
+
+        ok = updater.spawn_detached([sys.executable, "-m", "ai_idm", "update",
+                                     "--apply", "--restart-server"])
+        if not ok:
+            return 500, {"ok": False, "error": "更新进程启动失败，服务保持运行"}
+        # 服务继续跑旧代码，更新完成后再由更新进程 /shutdown —— 更新失败也不影响下载
+        return 200, {"ok": True, "restarting": True,
+                     "detail": "更新中，完成后服务会自动重启；扩展可能需要在 edge://extensions 重新加载"}
+
     # ---------- HLS ----------
 
-    def start_hls(self, url, name, headers, proxy):
+    def start_hls(self, url, name, headers, proxy, connections=None):
         from .hls import download_hls
 
         tid = "hls-" + secrets.token_hex(5)
@@ -683,6 +742,8 @@ class TakeoverServer:
         def worker():
             try:
                 res = download_hls(url, dest, headers=headers, proxy=proxy,
+                                   connections=int(connections or 8),
+                                   dest_dir=self.download_dir,
                                    progress=lambda d, t: rec.update(
                                        downloaded=d, total=t,
                                        percent=round(d / t * 100, 2) if t else 0))
@@ -713,20 +774,54 @@ def ensure_token(cfg=None, path=None):
     return tok
 
 
+def _already_running(host, port) -> bool:
+    """开机自启 + 手动启动同时发生时，第二个实例安静退出。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/ping", timeout=1.5) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return data.get("name") == "ai-idm"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def _start_update_watcher():
+    """服务常驻时每 30 分钟看一眼；check() 自己按 6h 冷却/30min 退避。"""
+    def loop():
+        try:
+            from . import updater
+            time.sleep(60)
+            while True:
+                if updater.is_repo():
+                    updater.check()
+                time.sleep(1800)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+    threading.Thread(target=loop, daemon=True, name="ai-idm-update").start()
+
+
 def serve(host=None, port=None, token=None, parallel=None, download_dir=None,
           run_downloads=True, quiet=False):
     cfg = cfgmod.load()
+    host = host or cfg.get("server_host") or "127.0.0.1"
+    port = int(port if port is not None else (cfg.get("server_port") or 13391))
+    if _already_running(host, port):
+        if not quiet:
+            print(f"AI-IDM 接管服务已在运行：http://{host}:{port}", flush=True)
+        return None
     tok = token or ensure_token(cfg)
     srv = TakeoverServer(host=host, port=port, token=tok, parallel=parallel,
                          download_dir=download_dir, run_downloads=run_downloads)
     srv.start()
+    _start_update_watcher()
     base = f"http://{srv.host}:{srv.port}"
     if not quiet:
         print(f"AI-IDM 接管服务 v{__version__} 已启动", flush=True)
         print(f"  地址    : {base}", flush=True)
         print(f"  令牌    : {srv.token}", flush=True)
         print(f"  下载目录: {srv.download_dir}", flush=True)
-        print(f"  面板    : {base}/?token={srv.token}", flush=True)
+        print(f"  面板    : {base}/#token={srv.token}", flush=True)
         print(f"  队列    : {'自动下载' if run_downloads else '仅入队（需另跑 ai-idm queue run）'}",
               flush=True)
         print("  扩展    : chrome://extensions → 开发者模式 → 加载已解压的扩展程序 → 选 browser-extension/",
@@ -790,8 +885,11 @@ code{background:#eef1f5;padding:1px 5px;border-radius:4px;font-size:12px}
 <script>
 const $=(s)=>document.querySelector(s);
 const q=new URLSearchParams(location.search);
-let token=q.get("token")||localStorage.getItem("aiidm_token")||"";
-if(q.get("token"))localStorage.setItem("aiidm_token",q.get("token"));
+const h=(location.hash||"").startsWith("#token=")?decodeURIComponent(location.hash.slice(7)):"";
+let token=q.get("token")||h||localStorage.getItem("aiidm_token")||"";
+if(token)localStorage.setItem("aiidm_token",token);
+// 令牌不留在地址栏/历史里：拿到就清掉片段（查询参数仅兼容旧链接）
+if(location.hash||q.get("token"))history.replaceState(null,"",location.pathname);
 $("#tok").value=token;
 function save(){token=$("#tok").value.trim();localStorage.setItem("aiidm_token",token);tick();}
 function fmt(n){if(!n)return "-";const u=["B","KB","MB","GB","TB"];let v=n,i=0;

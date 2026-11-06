@@ -29,6 +29,7 @@ HI = [bytes([0xA0 + i]) * (100_000 + i) for i in range(5)]
 LO = [bytes([0x50 + i]) * (50_000 + i) for i in range(5)]
 ENC = [bytes([0x11 + i]) * (40_000 + i) for i in range(4)]
 HITS = {}
+LIVE = {"hi": True}          # 同一路径切换清单内容，验证指纹失效旧分片
 
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -68,6 +69,9 @@ class H(http.server.BaseHTTPRequestHandler):
             return self._media(HI, "/hi/seg{i}.ts")
         if p == "/lo/index.m3u8":
             return self._media(LO, "/lo/seg{i}.ts")
+        if p == "/live/index.m3u8":
+            segs, tmpl = (HI, "/hi/seg{i}.ts") if LIVE["hi"] else (LO, "/lo/seg{i}.ts")
+            return self._media(segs, tmpl)
         if p == "/enc/index.m3u8":
             body = (f'#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n'
                     f'#EXT-X-KEY:METHOD=AES-128,URI="k.bin",IV=0x{IV_HEX}\n')
@@ -144,6 +148,17 @@ def main():
     print("   DEBUG resume  before:", before_all, " after:", after_all)
     ok4 = (open(out4, "rb").read() == b"".join(HI)) and (after - before == 1)
     results.append(("hls-resume", ok4, {"refetch": after - before}))
+
+    # 5. 清单变了：旧分片必须作废（指纹不一致 → 清空重下）
+    out5 = os.path.join(work, "live.ts")
+    download_hls(f"{base}/live/index.m3u8", out5, connections=2, keep_segments=True)
+    first_ok = open(out5, "rb").read() == b"".join(HI)
+    LIVE["hi"] = False
+    os.remove(out5)
+    download_hls(f"{base}/live/index.m3u8", out5, connections=2, keep_segments=True)
+    second_ok = open(out5, "rb").read() == b"".join(LO)
+    results.append(("hls-manifest-fp", first_ok and second_ok,
+                    {"first": first_ok, "second": second_ok}))
 
     print("\n=== 结果 ===")
     allok = True

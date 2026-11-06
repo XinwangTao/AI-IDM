@@ -1,0 +1,224 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI-IDM 文件落地与自适应策略（L1）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/ai_idm_file_policy_workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "landing",
+      "label": "落地与续传"
+    },
+    {
+      "id": "transfer",
+      "label": "分片与自适应"
+    },
+    {
+      "id": "exceptions",
+      "label": "失效处理",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "decide",
+      "label": "落地判定",
+      "fromCol": 0,
+      "toCol": 2
+    },
+    {
+      "id": "transfer",
+      "label": "传输",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "finish",
+      "label": "收尾",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6",
+    "n7"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "landing",
+      "col": 0,
+      "type": "frontend",
+      "label": "下载开始",
+      "sublabel": "HTTP / FTP / HLS"
+    },
+    {
+      "id": "n2",
+      "lane": "landing",
+      "col": 1,
+      "type": "security",
+      "label": "断点可用?",
+      "sublabel": "状态 + 临时文件都在",
+      "width": 104
+    },
+    {
+      "id": "n3",
+      "lane": "landing",
+      "col": 2,
+      "type": "security",
+      "label": "目标已存在?",
+      "sublabel": "同名文件",
+      "width": 100
+    },
+    {
+      "id": "n4",
+      "lane": "landing",
+      "col": 3,
+      "type": "frontend",
+      "label": "自动改名",
+      "sublabel": "name (1).ext",
+      "width": 100
+    },
+    {
+      "id": "n5",
+      "lane": "transfer",
+      "col": 4,
+      "type": "security",
+      "label": "清单指纹一致?",
+      "sublabel": "仅 HLS 分片",
+      "width": 108
+    },
+    {
+      "id": "n6",
+      "lane": "transfer",
+      "col": 5,
+      "type": "messagebus",
+      "label": "429 降并发",
+      "sublabel": "减半，下限 1",
+      "width": 100
+    },
+    {
+      "id": "n7",
+      "lane": "landing",
+      "col": 5,
+      "type": "frontend",
+      "label": "下载完成",
+      "sublabel": "落盘并校验",
+      "width": 96
+    },
+    {
+      "id": "f1",
+      "lane": "exceptions",
+      "col": 1,
+      "type": "security",
+      "label": "整包重下",
+      "sublabel": "丢弃旧状态",
+      "width": 96
+    },
+    {
+      "id": "f2",
+      "lane": "exceptions",
+      "col": 3,
+      "type": "security",
+      "label": "清空分片",
+      "sublabel": "按新清单重下",
+      "width": 100
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "label": "可用"
+    },
+    {
+      "from": "n2",
+      "to": "f1",
+      "label": "状态/临时文件缺失",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "f1",
+      "to": "n3",
+      "label": "从头下",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "n3",
+      "to": "n4",
+      "label": "存在"
+    },
+    {
+      "from": "n3",
+      "to": "n5",
+      "label": "不存在",
+      "variant": "dashed"
+    },
+    {
+      "from": "n4",
+      "to": "n5",
+      "label": "继续"
+    },
+    {
+      "from": "n5",
+      "to": "n6",
+      "label": "一致"
+    },
+    {
+      "from": "n5",
+      "to": "f2",
+      "label": "清单变了",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "from": "f2",
+      "to": "n6",
+      "label": "重下分片",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "n6",
+      "to": "n7",
+      "label": "继续传输"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "四项改动",
+      "items": [
+        "同名文件不再覆盖：自动加 (1)(2)，CLI 可用 --overwrite 关闭",
+        "HLS 分片按清单指纹复用，清单变了就清空重下",
+        "收到 429 自动把并发减半，下限 1，不再硬编码镜像名单",
+        "面板令牌改用 #token= 片段，不进入 URL 查询与服务器日志"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "失效处理",
+      "items": [
+        "状态在但临时文件缺失/变短：丢弃状态整包重下",
+        "清单指纹不一致：旧分片不再信任",
+        "降并发只降不升，避免把服务器压垮"
+      ]
+    }
+  ]
+}

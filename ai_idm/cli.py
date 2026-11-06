@@ -133,6 +133,7 @@ def cmd_get(args):
                         else bool(cfg.get("dynamic_chunks", True))),
         keepalive=(False if args.no_keepalive
                    else bool(cfg.get("keepalive", True))),
+        unique=not args.overwrite,
     )
     try:
         result = dl.run()
@@ -195,7 +196,8 @@ def cmd_hls(args):
         r = download_hls(args.url, args.output, connections=args.connections,
                          quality=args.quality, headers=headers, proxy=args.proxy,
                          insecure=args.insecure, keep_segments=args.keep_segments,
-                         restart=args.restart, progress=progress)
+                         restart=args.restart, progress=progress,
+                         unique=not args.overwrite)
     except HlsError as e:
         if not args.quiet:
             sys.stderr.write("\n")
@@ -380,6 +382,114 @@ def cmd_queue_purge(args):
     return 0
 
 
+def _render_update_state(st):
+    if st.get("error"):
+        print(f"检查失败：{st['error']}")
+        return
+    local = st.get("local_version") or "?"
+    remote = st.get("remote_version") or "?"
+    if not st.get("available"):
+        print(f"已是最新（服务端 {local}）")
+        return
+    print(f"发现新版本：服务端 {local} -> {remote}，"
+          f"扩展 {st.get('local_ext_version')} -> {st.get('remote_ext_version')}")
+    print(f"落后 {st.get('behind')} 个提交，本地领先 {st.get('ahead')} 个")
+    for line in st.get("subjects") or []:
+        print(f"  {line}")
+
+
+def _server_running_tasks():
+    """问本地服务还有几个任务在跑；服务没开返回 None。"""
+    import urllib.request
+    cfg = cfgmod.load()
+    host = cfg.get("server_host") or "127.0.0.1"
+    port = int(cfg.get("server_port") or 13391)
+    try:
+        req = urllib.request.Request(f"http://{host}:{port}/status",
+                                     headers={"X-AI-IDM-Token": cfg.get("server_token") or ""})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return sum(1 for t in data.get("tasks") or [] if t.get("status") == "running")
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _server_alive():
+    import urllib.request
+    cfg = cfgmod.load()
+    host = cfg.get("server_host") or "127.0.0.1"
+    port = int(cfg.get("server_port") or 13391)
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/ping", timeout=1.5) as r:
+            return json.loads(r.read().decode("utf-8", "replace")).get("name") == "ai-idm"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def cmd_update(args):
+    from . import updater
+
+    if args.rollback:
+        res = updater.rollback(None if args.rollback == "last" else args.rollback)
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        elif res.get("ok"):
+            print(f"已回滚：{res.get('from', '')[:8]} -> {res.get('to', '')[:8]}")
+            if res.get("detail"):
+                print(f"  {res['detail']}")
+        else:
+            print(f"回滚失败：{res.get('error')}")
+        return 0 if res.get("ok") else 1
+
+    def _guard_busy():
+        active = _server_running_tasks()
+        if active:
+            print(f"还有 {active} 个下载任务在跑，完成后再更新")
+            return False
+        return True
+
+    if args.apply:
+        if not _guard_busy():
+            return 1
+        res = updater.apply()
+        if args.restart_server:
+            updater.stop_server()          # 先把旧进程请走，再拉起新代码
+            res["restarting"] = updater.spawn_restart()
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        elif res.get("ok"):
+            print(f"更新完成：{res.get('from', '')[:8]} -> {res.get('to', '')[:8]}")
+            if res.get("detail"):
+                print(f"  {res['detail']}")
+            if _server_alive() and not args.restart_server:
+                print("  运行中的服务仍是旧代码，重启 serve 后生效")
+        else:
+            print(f"更新失败：{res.get('error')}")
+        return 0 if res.get("ok") else 1
+
+    st = updater.check(force=args.force)
+    if args.json:
+        print(json.dumps(st, ensure_ascii=False, indent=2))
+    else:
+        _render_update_state(st)
+    if st.get("error") or not st.get("available"):
+        return 0
+
+    if args.check or not sys.stdin.isatty():
+        if not args.check:
+            print("（非交互环境）确认后运行：ai-idm update --apply")
+        return 2
+    answer = input("现在更新？会重启接管服务，下载中的任务会阻止更新 [y/N] ").strip().lower()
+    if args.yes or answer in ("y", "yes"):
+        if not _guard_busy():
+            return 1
+        res = updater.apply()
+        print("更新完成" if res.get("ok") else f"更新失败：{res.get('error')}")
+        return 0 if res.get("ok") else 1
+    print("已跳过")
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="ai-idm",
@@ -417,6 +527,8 @@ def build_parser():
     g.add_argument("--insecure", action="store_true", help="跳过 TLS 证书校验")
     g.add_argument("--no-resume", action="store_true", help="不读取断点状态，重新下载")
     g.add_argument("--checksum", choices=["md5", "sha256"], help="下载完成后计算校验和")
+    g.add_argument("--overwrite", action="store_true",
+                   help="目标已存在时直接覆盖（默认自动改名为 name (1).ext）")
     g.add_argument("-q", "--quiet", action="store_true")
     g.set_defaults(func=cmd_get)
 
@@ -445,6 +557,8 @@ def build_parser():
     h.add_argument("--insecure", action="store_true")
     h.add_argument("--keep-segments", action="store_true", help="保留下载的分片目录")
     h.add_argument("--restart", action="store_true", help="丢弃已下分片重新开始")
+    h.add_argument("--overwrite", action="store_true",
+                   help="目标已存在时直接覆盖（默认自动改名为 name (1).ts）")
     h.add_argument("-q", "--quiet", action="store_true")
     h.set_defaults(func=cmd_hls)
 
@@ -535,6 +649,18 @@ def build_parser():
                      help="只删 N 天前的记录（省略=不限时间）")
     qpg.add_argument("--db")
     qpg.set_defaults(func=cmd_queue_purge)
+
+    # ---- update ----
+    up = sub.add_parser("update", help="检查/安装更新（服务端 + 浏览器扩展）")
+    up.add_argument("--check", action="store_true", help="只检查，退出码 2 表示有新版")
+    up.add_argument("--apply", action="store_true", help="直接安装，不询问")
+    up.add_argument("--rollback", nargs="?", const="last", metavar="COMMIT",
+                    help="回滚到上次更新前（或指定提交）")
+    up.add_argument("--force", action="store_true", help="忽略 6 小时检查冷却")
+    up.add_argument("-y", "--yes", action="store_true", help="询问时默认同意")
+    up.add_argument("--json", action="store_true", help="输出 JSON")
+    up.add_argument("--restart-server", action="store_true", help=argparse.SUPPRESS)
+    up.set_defaults(func=cmd_update)
     return p
 
 

@@ -18,7 +18,7 @@ import threading
 import time
 from urllib.parse import unquote, urlsplit
 
-from .engine import DownloadError, plan_segments
+from .engine import DownloadError, Segment, plan_segments, unique_path
 
 
 class FtpError(DownloadError):
@@ -28,7 +28,7 @@ class FtpError(DownloadError):
 class FtpDownload:
     def __init__(self, url, dest=None, connections=8, min_seg=1 << 20,
                  insecure=False, resume=True, progress=None, timeout=30,
-                 max_retries=4, verify=None):
+                 max_retries=4, verify=None, unique=True):
         parts = urlsplit(url)
         if parts.scheme not in ("ftp", "ftps"):
             raise FtpError(f"不是 FTP 地址: {url}")
@@ -48,6 +48,7 @@ class FtpDownload:
         self.timeout = timeout
         self.max_retries = max_retries
         self.verify = verify
+        self.unique = bool(unique)
 
         self.total = 0
         self.done = 0
@@ -146,8 +147,20 @@ class FtpDownload:
             return False
         if self.total and st.get("total") and st["total"] != self.total:
             return False
-        self.segments = [plan_segments(self.total, 1)[0].__class__(
-            s["i"], s["s"], s["e"], s.get("d", 0)) for s in st["segments"]]
+        # 与 engine 相同的保护：临时文件不在/被截短时，续传会跳过从未落盘的字节
+        if not self.total:
+            return False
+        try:
+            if os.path.getsize(self.dest + ".idmpart") < self.total:
+                return False
+        except OSError:
+            return False
+        segs = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st.get("segments") or []]
+        if not segs or sum(s.size for s in segs) != self.total:
+            return False
+        if any(s.done > s.size for s in segs):
+            return False
+        self.segments = segs
         return True
 
     def _write_at(self, pos, data):
@@ -270,12 +283,17 @@ class FtpDownload:
             if parent:
                 os.makedirs(parent, exist_ok=True)
             self._state_path = self.dest + ".idmpart.json"
-            self._temp_path = self.dest + ".idmpart"
 
             if not self._load_state():
                 # SIZE 拿不到就单连接顺序读（无法分段）
                 self.segments = (plan_segments(self.total, self.connections, self.min_seg, dynamic=False)
                                  if self.total else [])
+                if self.unique:
+                    new_dest = unique_path(self.dest)
+                    if new_dest != self.dest:
+                        self.dest = new_dest
+                        self._state_path = self.dest + ".idmpart.json"
+            self._temp_path = self.dest + ".idmpart"
             self._fh = (open(self._temp_path, "r+b") if os.path.exists(self._temp_path)
                         else open(self._temp_path, "w+b"))
             if self.total:

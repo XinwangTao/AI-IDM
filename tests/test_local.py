@@ -111,6 +111,23 @@ def main():
     results.append(("multipart", r["status"] == "done" and sha256(dest) == expect and distinct >= 2,
                     {"ranges_seen": distinct, "size": os.path.getsize(dest), "sec": r.get("elapsed_sec")}))
 
+    # --- 2b. 同名文件不覆盖：自动改名 ---
+    dest_u = os.path.join(WORK, "dup.bin")
+    for f in (dest_u, dest_u + ".idmpart", dest_u + ".idmpart.json"):
+        if os.path.exists(f):
+            os.remove(f)
+    with open(dest_u, "wb") as f:
+        f.write(b"keep me")
+    ru = Download(url, dest=dest_u, connections=2).run()
+    kept = open(dest_u, "rb").read() == b"keep me"
+    results.append(("unique-name",
+                    ru["status"] == "done" and ru["dest"] != dest_u and kept
+                    and os.path.basename(ru["dest"]).startswith("dup (1)"),
+                    {"dest": os.path.basename(ru["dest"])}))
+    for f in (dest_u, ru["dest"], dest_u + ".idmpart.json"):
+        if os.path.exists(f):
+            os.remove(f)
+
     # --- 3. 限速 + 取消 + 续传 ---
     dest2 = os.path.join(WORK, "b.bin")
     for f in (dest2, dest2 + ".idmpart.json"):
@@ -128,6 +145,26 @@ def main():
     results.append(("resume", has_state and partial["downloaded"] > 0
                     and r2["status"] == "done" and sha256(dest2) == expect,
                     {"partial_bytes": partial["downloaded"], "final": r2["status"]}))
+
+    # --- 3b. 状态在、临时文件丢了：必须拒绝续传（否则会跳过从未落盘的字节） ---
+    dest4 = os.path.join(WORK, "keep.bin")
+    state4 = dest4 + ".idmpart.json"
+    dl4 = Download(url, dest=dest4, connections=4)
+    dl4.probe_info = probe(url)
+    dl4.total = dl4.probe_info.total
+    dl4._state_path = state4
+    with open(state4, "w", encoding="utf-8") as f:
+        json.dump({"url": url, "dest": dest4, "total": dl4.total,
+                   "etag": dl4.probe_info.etag,
+                   "last_modified": dl4.probe_info.last_modified,
+                   "segments": [{"i": 0, "s": 0, "e": dl4.total - 1,
+                                 "d": dl4.total // 2}]}, f)
+    if os.path.exists(dest4 + ".idmpart"):
+        os.remove(dest4 + ".idmpart")
+    resumed = dl4._load_state()
+    results.append(("resume-needs-tempfile", resumed is False, {"loaded": resumed}))
+    if os.path.exists(state4):
+        os.remove(state4)
 
     # --- 4. 服务端忽略 Range → 单连接降级 ---
     SUPPORT_RANGE["on"] = False

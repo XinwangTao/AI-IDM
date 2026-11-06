@@ -1,0 +1,210 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI-IDM 自动更新流程（L2）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/ai_idm_auto_update_workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "check",
+      "label": "自动检查"
+    },
+    {
+      "id": "apply",
+      "label": "确认与更新"
+    },
+    {
+      "id": "exceptions",
+      "label": "失败与回滚",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "auto",
+      "label": "自动检查",
+      "fromCol": 0,
+      "toCol": 3
+    },
+    {
+      "id": "confirm",
+      "label": "人工确认",
+      "fromCol": 4,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "install",
+      "label": "安装与恢复",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "check",
+      "col": 0,
+      "type": "frontend",
+      "label": "检查触发",
+      "sublabel": "启动 / 6h / 弹窗 / CLI",
+      "width": 108
+    },
+    {
+      "id": "n2",
+      "lane": "check",
+      "col": 1,
+      "type": "backend",
+      "label": "拉取远端",
+      "sublabel": "git fetch，20s 超时",
+      "width": 104
+    },
+    {
+      "id": "n3",
+      "lane": "check",
+      "col": 2,
+      "type": "security",
+      "label": "比较版本",
+      "sublabel": "远端 vs 本地提交",
+      "width": 104
+    },
+    {
+      "id": "n4",
+      "lane": "check",
+      "col": 3,
+      "type": "frontend",
+      "label": "标记有新版本",
+      "sublabel": "/update 状态 + 扩展横幅"
+    },
+    {
+      "id": "n5",
+      "lane": "apply",
+      "col": 4,
+      "type": "security",
+      "label": "用户确认",
+      "sublabel": "无活动下载任务",
+      "tag": "human gate"
+    },
+    {
+      "id": "n6",
+      "lane": "apply",
+      "col": 5,
+      "type": "backend",
+      "label": "更新并重启",
+      "sublabel": "rebase + pip -e + 校验",
+      "width": 112
+    },
+    {
+      "id": "f1",
+      "lane": "exceptions",
+      "col": 2,
+      "type": "messagebus",
+      "label": "静默跳过",
+      "sublabel": "30 分钟后重试",
+      "width": 96
+    },
+    {
+      "id": "f2",
+      "lane": "exceptions",
+      "col": 4,
+      "type": "security",
+      "label": "暂不执行",
+      "sublabel": "有任务在跑，提示稍后"
+    },
+    {
+      "id": "f3",
+      "lane": "exceptions",
+      "col": 5,
+      "type": "security",
+      "label": "自动回滚",
+      "sublabel": "恢复旧 commit 并重启",
+      "width": 104
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "label": "有响应"
+    },
+    {
+      "from": "n3",
+      "to": "n4",
+      "label": "远端更新"
+    },
+    {
+      "from": "n4",
+      "to": "n5",
+      "label": "打开弹窗或运行命令"
+    },
+    {
+      "from": "n5",
+      "to": "n6",
+      "label": "确认"
+    },
+    {
+      "from": "n3",
+      "to": "f1",
+      "label": "离线 / 超时 / 无新版",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "n5",
+      "to": "f2",
+      "label": "有下载任务",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "from": "n6",
+      "to": "f3",
+      "label": "安装或启动失败",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "from": "f3",
+      "to": "n4",
+      "label": "回滚完成，继续提示旧版",
+      "variant": "dashed",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "主路径",
+      "items": [
+        "每 6 小时或打开弹窗时查一次远端，失败不打扰",
+        "有新版只提示，下载任务进行中不允许更新",
+        "确认后更新服务端代码并同步 Edge 扩展快照"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "失败与回滚",
+      "items": [
+        "离线、超时、无新版：静默退避 30 分钟",
+        "有活动下载任务：拒绝执行，等用户稍后",
+        "rebase 或安装失败：恢复旧 commit 并重启旧版"
+      ]
+    }
+  ]
+}

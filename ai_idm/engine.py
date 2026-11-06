@@ -181,6 +181,30 @@ def _open_with_retry(opener, req, timeout, max_retries=4):
     raise last
 
 
+def _replace_file(src, dst, attempts=6):
+    """Windows 上目标文件可能被杀软/播放器短暂占用，重试几次再报错。"""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.15 * (i + 1))
+
+
+def unique_path(dest, limit=999):
+    """目标已存在时自动加 (1)(2)…，绝不静默覆盖已有文件。"""
+    if not os.path.exists(dest):
+        return dest
+    base, ext = os.path.splitext(dest)
+    for i in range(1, limit + 1):
+        cand = f"{base} ({i}){ext}"
+        if not os.path.exists(cand):
+            return cand
+    return f"{base} ({time.time_ns()}){ext}"
+
+
 def probe(url, headers=None, proxy=None, insecure=False, timeout=30):
     hdrs = {"User-Agent": DEFAULT_UA}
     if headers:
@@ -361,7 +385,7 @@ class Download:
                  insecure=False, resume=True, verify=None, progress=None,
                  timeout=30, max_retries=4, state_dir=None, schedule=None,
                  verify_sample=0, verify_seam=None, open_range=None,
-                 dynamic_chunks=None, keepalive=None, dest_dir=None):
+                 dynamic_chunks=None, keepalive=None, dest_dir=None, unique=True):
         self.url = url
         # 由服务端/队列指定"落到哪个目录"：dest 为空时用探测出的文件名拼上它
         self.dest_dir = dest_dir
@@ -388,12 +412,19 @@ class Download:
         self.dynamic_chunks = True if dynamic_chunks is None else bool(dynamic_chunks)
         # 连接复用：同一 worker 连续取块时复用同一条 TCP（IDM 的 Reusing connection.）
         self.keepalive = True if keepalive is None else bool(keepalive)
+        # 同名文件不覆盖：默认自动改名，CLI 用 --overwrite 关掉
+        self.unique = bool(unique)
+        # 自适应并发：收到 429 就把有效并发减半（只降不升，下限 1）
+        self._active = 0
+        self._active_cap = max(1, int(connections or 1))
+        self.adaptive_downs = 0
         # 镜像站按请求数限流：多连接 = 多请求 = 必被 429。强制单连接串行整取。
         self.mirror = is_mirror_host(url)
         if self.mirror:
             self.connections = 1
             self.dynamic_chunks = False
             self.keepalive = False
+            self._active_cap = 1
         self._pool = None
         self._fetch_url = None
         self.mismatch_detected = False
@@ -424,6 +455,7 @@ class Download:
         self.seams_checked = 0
         self.seams_mismatched = 0
         self._last_save = 0.0
+        self._last_emit = 0.0
 
     # ---------------- 状态文件 ----------------
 
@@ -472,8 +504,23 @@ class Download:
             return False
         if p and p.last_modified and st.get("last_modified") and st["last_modified"] != p.last_modified:
             return False
+        # 续传必须能证明已下数据还在盘上：临时文件缺失或被截短时，
+        # 计划的 done 会跳过那些从未落盘的字节，最终得到一个"大小对、内容坏"的文件。
+        if not p or not p.total:
+            return False
+        temp = self.dest + ".idmpart"
+        try:
+            if os.path.getsize(temp) < p.total:
+                return False
+        except OSError:
+            return False
+        segs = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st.get("segments") or []]
+        if not segs or sum(s.size for s in segs) != p.total:
+            return False
+        if any(s.done > s.size for s in segs):
+            return False
         self.total = st.get("total") or self.total
-        self.segments = [Segment(s["i"], s["s"], s["e"], s.get("d", 0)) for s in st["segments"]]
+        self.segments = segs
         return True
 
     # ---------------- 进度 ----------------
@@ -495,6 +542,9 @@ class Download:
             "speed_bps": round(self.speed, 1),
             "eta_sec": round(eta, 1) if eta is not None else None,
             "connections": sum(1 for s in self.segments if s.remaining > 0) if self.status == "running" else 0,
+            "active_connections": self._active,
+            "connection_cap": self._active_cap,
+            "adaptive_downs": self.adaptive_downs,
             "segments": len(self.segments),
             "reassigned": self.reassigned,
             "handoffs": self.handoffs,
@@ -504,7 +554,13 @@ class Download:
             "pool": self._pool.stats if self._pool is not None else None,
         }
 
-    def _emit(self):
+    def _emit(self, force=False):
+        # 每 64KB 回调一次会让服务端/扩展每秒收到上千次快照，纯属浪费；
+        # 10Hz 足够 UI 平滑，状态切换时用 force=True 保证不丢事件。
+        now = time.monotonic()
+        if not force and now - self._last_emit < 0.1:
+            return
+        self._last_emit = now
         if self.progress_cb:
             try:
                 self.progress_cb(self.snapshot())
@@ -591,6 +647,18 @@ class Download:
                         expect = seg.start + seg.done
                         if cr and cr[0] != expect:
                             raise DownloadError(f"区间不匹配: 期望 {expect}, 返回 {cr[0]}")
+                    if resp.status >= 400:
+                        # 连接池路径不会抛 HTTPError，状态码得自己处理
+                        if resp.status == 429:
+                            self._dial_down()
+                        delay = 0.0
+                        try:
+                            delay = float(resp.headers.get("Retry-After") or 0)
+                        except (TypeError, ValueError):
+                            pass
+                        if delay > 0:
+                            time.sleep(min(delay, 60))
+                        raise DownloadError(f"HTTP {resp.status}")
                     pos = seg.start + seg.done
                     seam = self._seam_len(seg)
                     tail = bytearray()
@@ -633,6 +701,9 @@ class Download:
             except urllib.error.HTTPError as e:
                 if e.code == 416 and seg.remaining == 0:
                     return
+                if e.code == 429:
+                    # 服务端在限流：把有效并发减半，别再往上顶
+                    self._dial_down()
                 attempt += 1
                 if attempt > self.max_retries:
                     raise DownloadError(f"HTTP {e.code}") from e
@@ -669,31 +740,58 @@ class Download:
             self._stop.wait(min(0.3, max(0.05, soonest - now)))
         return None
 
+    def _enter_slot(self) -> bool:
+        """在有效并发上限内占一个槽；没活可干时返回 False（线程退出）。"""
+        while not self._stop.is_set():
+            with self._lock:
+                if self._active < self._active_cap:
+                    self._active += 1
+                    return True
+                waiting = any(s.remaining > 0 for s in self.segments)
+            if not waiting:
+                return False
+            self._stop.wait(0.2)
+        return False
+
+    def _dial_down(self):
+        """429 之后把有效并发减半；只降不升，避免把限流服务器压垮。"""
+        with self._lock:
+            if self._active_cap <= 1:
+                return
+            self._active_cap = max(1, self._active_cap // 2)
+            self.adaptive_downs += 1
+
     def _worker(self):
         while not self._stop.is_set():
-            seg = self._claim()
-            if seg is None:
+            if not self._enter_slot():
                 return
             try:
-                self._fetch_segment(seg)
-            except DownloadError as e:
-                if self._fallback:
+                seg = self._claim()
+                if seg is None:
                     return
-                if "服务端忽略了 Range" in str(e):
-                    self._fallback = True
-                    self._stop.set()
-                    return
-                if not self._reassign(seg, str(e)):
-                    self.error = str(e)
-                    self._stop.set()
-                    return
-            except Exception as e:
-                if self._fallback:
-                    return
-                if not self._reassign(seg, str(e)):
-                    self.error = str(e)
-                    self._stop.set()
-                    return
+                try:
+                    self._fetch_segment(seg)
+                except DownloadError as e:
+                    if self._fallback:
+                        return
+                    if "服务端忽略了 Range" in str(e):
+                        self._fallback = True
+                        self._stop.set()
+                        return
+                    if not self._reassign(seg, str(e)):
+                        self.error = str(e)
+                        self._stop.set()
+                        return
+                except Exception as e:
+                    if self._fallback:
+                        return
+                    if not self._reassign(seg, str(e)):
+                        self.error = str(e)
+                        self._stop.set()
+                        return
+            finally:
+                with self._lock:
+                    self._active -= 1
 
     # ---------------- 主流程 ----------------
 
@@ -854,6 +952,12 @@ class Download:
             if not self._load_state():
                 self.segments = plan_segments(self.total, self.connections,
                                               self.min_seg, self.dynamic_chunks)
+                # 不是有效续传：目标已存在就换个名字，绝不覆盖用户已有文件
+                if self.unique:
+                    new_dest = unique_path(self.dest)
+                    if new_dest != self.dest:
+                        self.dest = new_dest
+                        self._state_path = self._state_file()
 
             # IDM 的模型：分片先写临时文件，完成后才搬运到目标路径
             self._temp_path = self.dest + ".idmpart"
@@ -904,13 +1008,13 @@ class Download:
 
             if self._pool is not None:
                 self._pool.close()
-            os.replace(self._temp_path, self.dest)   # 原子搬运
+            _replace_file(self._temp_path, self.dest)   # 原子搬运（带 Windows 占用重试）
             self._temp_path = None
             self.status = "done"
             self.finished_at = time.time()
             self.speed = 0.0
             self.done = written or size
-            self._emit()
+            self._emit(force=True)
             if self._state_path and os.path.exists(self._state_path):
                 os.remove(self._state_path)
 
@@ -931,7 +1035,7 @@ class Download:
             self.error = self.error or str(e)
             self.speed = 0.0
             self._save_state(force=True)
-            self._emit()
+            self._emit(force=True)
             if self._fh is not None:
                 try:
                     self._fh.close()
@@ -1022,13 +1126,13 @@ class Download:
                     self.total = pos      # 采信实际字节数（服务器 Content-Length 差 1 的 quirk）
                 else:
                     raise DownloadError(f"未完成: {pos}/{total} 字节")
-            os.replace(self._temp_path, self.dest)
+            _replace_file(self._temp_path, self.dest)
             self._temp_path = None
             self.status = "done"
             self.finished_at = time.time()
             self.speed = 0.0
             self.done = pos
-            self._emit()
+            self._emit(force=True)
             result = self.snapshot()
             result["elapsed_sec"] = round(self.finished_at - self.started_at, 2)
             if self.verify:
@@ -1058,7 +1162,7 @@ class Download:
         h.update(self.headers)
         req = urllib.request.Request(self.url, headers=h, method="GET")
         pos = 0
-        with opener.open(req, timeout=self.timeout) as resp:
+        with _open_with_retry(opener, req, self.timeout, self.max_retries) as resp:
             while not self._stop.is_set():
                 chunk = resp.read(CHUNK)
                 if not chunk:
