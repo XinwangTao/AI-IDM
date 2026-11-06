@@ -194,8 +194,16 @@ async function refresh() {
   const ok = await ping();
   if (!ok) { render([]); return; }
   try {
-    const d = await api("/status");
+    const [d, b] = await Promise.all([
+      api("/status"),
+      api("/batch").catch(() => null),      // 批量任务状态（可选）
+    ]);
     render(d.tasks || []);
+    const job = b && b.job;
+    if (job && (job.status === "running" || job.status === "cancelling")) {
+      $("#foot").textContent = `批量 ${job.done}/${job.total}`
+        + (job.failed ? ` · 失败 ${job.failed}` : "");
+    }
   } catch (e) {
     $("#foot").textContent = String(e.message || e);
   }

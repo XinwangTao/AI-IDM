@@ -6,6 +6,18 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.18.0] - 2026-11-06
+
+### Changed
+- **扩展批量改走批量引擎。** `POST /batch` 不再逐个入队（旧路径并发只有 `server_parallel`），
+  而是启动一个后台批量任务：全局 16 / 每站 6、共享连接池、单请求；同一时间只允许一个任务，
+  避免把同一站点打爆。
+- **新增 `GET /batch` 与 `POST /batch/cancel`：** 查任务进度（完成/失败/字节/最近错误）与取消；
+  取消会停止活动下载和未开始项，已落盘文件保留。任务状态只在内存，重启只丢状态。
+
+### Changed (extension)
+- 「下载本页所有链接/图片」改为提示“已开始批量下载，共 N 个文件”，适配新的任务式响应。
+
 ## [1.17.2] - 2026-11-06
 
 ### Fixed

@@ -354,6 +354,8 @@ class TakeoverServer:
         self.events = collections.deque(maxlen=200)
         self.hls_tasks = {}
         self._hls_lock = threading.Lock()
+        self._batch_job = None
+        self._batch_lock = threading.Lock()
         self._httpd = None
         self._thread = None
         self.runner = None
@@ -481,6 +483,8 @@ class TakeoverServer:
                     return self._json(200, {"ok": True, "config": c})
                 if path == "/update":
                     return self._json(200, app.update_status())
+                if path == "/batch":
+                    return self._json(200, app.batch_status())
                 if path == "/add":
                     return self._handle_add({k: v[0] for k, v in qs.items()})
                 return self._json(404, {"ok": False, "error": "未知接口"})
@@ -499,6 +503,9 @@ class TakeoverServer:
                     return self._handle_add(payload)
                 if path == "/batch":
                     return self._handle_batch(payload)
+                if path == "/batch/cancel":
+                    code, obj = app.batch_cancel()
+                    return self._json(code, obj)
                 if path.startswith("/cancel/"):
                     return self._handle_cancel(path.rsplit("/", 1)[-1])
                 if path.startswith("/remove/"):
@@ -583,55 +590,10 @@ class TakeoverServer:
                 return self._json(200, resp)
 
             def _handle_batch(self, p):
-                """扩展“抓当前页全部链接/图片”入口：批量入队，复用队列去重。"""
-                urls = p.get("urls")
-                if not isinstance(urls, list) or not urls:
-                    return self._json(400, {"ok": False, "error": "urls 必须是非空数组"})
-                if len(urls) > 2000:
-                    return self._json(400, {"ok": False, "error": "单次最多 2000 个 URL"})
-                added = deduped = invalid = 0
-                for raw in urls:
-                    if not isinstance(raw, str):
-                        invalid += 1
-                        continue
-                    try:
-                        url = validate_url(raw.strip())
-                    except ValueError:
-                        invalid += 1
-                        continue
-                    path = urllib.parse.urlsplit(url).path
-                    name = sanitize_filename(
-                        os.path.basename(urllib.parse.unquote(path)) or "")
-                    if url.lower().split("?")[0].endswith(".m3u8"):
-                        # HLS 走内存任务（分片合并），不进普通队列
-                        try:
-                            app.start_hls(url, name or None, {}, None)
-                            added += 1
-                        except Exception:                    # noqa: BLE001
-                            invalid += 1
-                        continue
-                    dest = os.path.join(app.download_dir, name) if name else None
-                    r = cfgmod.resolve(url, app.cfg)
-                    try:
-                        if bool(app.cfg.get("dedup_add", True)):
-                            _row, dup = app.q.find_or_add(
-                                url, dest=dest, connections=r["connections"],
-                                limit_bps=r["limit_bps"], proxy=r["proxy"],
-                                headers={}, priority=0)
-                            if dup:
-                                deduped += 1
-                            else:
-                                added += 1
-                        else:
-                            app.q.add(url, dest=dest, connections=r["connections"],
-                                      limit_bps=r["limit_bps"], proxy=r["proxy"],
-                                      headers={}, priority=0)
-                            added += 1
-                    except Exception:                        # noqa: BLE001
-                        invalid += 1
-                app.push_event({"event": "batch", "added": added, "deduped": deduped})
-                return self._json(200, {"ok": True, "added": added,
-                                        "deduped": deduped, "invalid": invalid})
+                """扩展“抓当前页全部链接/图片”入口：起一个后台批量任务。"""
+                code, obj = app.batch_start(p)
+                return self._json(code, obj)
+
 
             def _handle_cancel(self, tid):
                 if app.runner and app.runner.cancel(tid):
@@ -778,6 +740,97 @@ class TakeoverServer:
         # 服务继续跑旧代码，更新完成后再由更新进程 /shutdown —— 更新失败也不影响下载
         return 200, {"ok": True, "restarting": True,
                      "detail": "更新中，完成后服务会自动重启；扩展可能需要在 edge://extensions 重新加载"}
+
+    # ---------- 批量任务 ----------
+
+    def _batch_public(self, job):
+        return {k: v for k, v in job.items() if k != "stop"}
+
+    def batch_status(self):
+        with self._batch_lock:
+            job = self._batch_job
+        return {"ok": True, "job": self._batch_public(job) if job else None}
+
+    def batch_start(self, payload):
+        urls = payload.get("urls")
+        if not isinstance(urls, list) or not urls:
+            return 400, {"ok": False, "error": "urls 必须是非空数组"}
+        if len(urls) > 2000:
+            return 400, {"ok": False, "error": "单次最多 2000 个 URL"}
+        valid, invalid = [], 0
+        for raw in urls:
+            if not isinstance(raw, str):
+                invalid += 1
+                continue
+            try:
+                valid.append(validate_url(raw.strip()))
+            except ValueError:
+                invalid += 1
+        if not valid:
+            return 400, {"ok": False, "error": "没有合法的 http(s) URL"}
+
+        with self._batch_lock:
+            job = self._batch_job
+            if job and job.get("status") in ("running", "cancelling"):
+                return 409, {"ok": False,
+                             "error": "已有批量任务在跑，等它结束或先调用 /batch/cancel"}
+            job = {"id": "batch-" + secrets.token_hex(4), "total": len(valid),
+                   "done": 0, "skipped": 0, "failed": 0, "bytes": 0,
+                   "invalid": invalid, "status": "running",
+                   "started_at": time.time(), "finished_at": None,
+                   "error": None, "errors": [], "stop": threading.Event()}
+            self._batch_job = job
+
+        threading.Thread(target=self._run_batch_job, args=(job, valid),
+                         daemon=True, name="ai-idm-batch").start()
+        return 200, {"ok": True, "id": job["id"], "total": len(valid),
+                     "invalid": invalid, "status": "running"}
+
+    def batch_cancel(self):
+        with self._batch_lock:
+            job = self._batch_job
+            if not job or job.get("status") != "running":
+                return 409, {"ok": False, "error": "没有正在跑的批量任务"}
+            job["status"] = "cancelling"
+            job["stop"].set()
+            return 200, {"ok": True, "id": job["id"], "status": "cancelling"}
+
+    def _run_batch_job(self, job, urls):
+        from . import batch as batchmod
+
+        cfg = self.cfg
+
+        def progress(done, total, nbytes, res):
+            with self._batch_lock:
+                job.update(done=done, total=total, bytes=nbytes)
+                if res.get("status") == "failed":
+                    job["failed"] += 1
+                    if len(job["errors"]) < 20:
+                        job["errors"].append({"url": res.get("url"),
+                                              "error": res.get("error")})
+
+        try:
+            summary = batchmod.run_batch(
+                urls, self.download_dir,
+                concurrency=int(cfg.get("batch_concurrency") or 16),
+                per_host=int(cfg.get("batch_per_host") or 6),
+                resume=False, dirs=False, overwrite=False,
+                proxy=cfg.get("proxy"),
+                timeout=int(cfg.get("timeout") or 30),
+                max_retries=int(cfg.get("max_retries") or 4),
+                progress=progress, stop_event=job["stop"],
+                write_manifest=False)
+            with self._batch_lock:
+                job.update(done=summary["done"], skipped=summary["skipped"],
+                           failed=summary["failed"], bytes=summary["bytes"],
+                           status="cancelled" if job["stop"].is_set() else "done",
+                           elapsed_sec=summary["elapsed_sec"],
+                           finished_at=time.time())
+            self.push_event({"event": "batch_done", "id": job["id"], **summary})
+        except Exception as e:                               # noqa: BLE001
+            with self._batch_lock:
+                job.update(status="error", error=str(e), finished_at=time.time())
+            self.push_event({"event": "batch_error", "id": job["id"], "error": str(e)})
 
     # ---------- HLS ----------
 

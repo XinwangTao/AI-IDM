@@ -622,8 +622,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         return;
       }
       const r = await api("/batch", { method: "POST", body: { urls }, timeout: 20000 });
-      notify("已交给 AI-IDM 批量下载",
-             `新增 ${r.added || 0}，已存在 ${r.deduped || 0}，无效 ${r.invalid || 0}`);
+      notify("已开始批量下载",
+             `共 ${r.total || urls.length} 个文件`
+             + (r.invalid ? `，忽略 ${r.invalid} 个无效链接` : ""));
       await bumpBadge();
     } catch (e) {
       notify("批量加入失败", String(e.message || e));
