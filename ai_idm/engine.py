@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -409,7 +410,7 @@ class Download:
                  timeout=30, max_retries=4, state_dir=None, schedule=None,
                  verify_sample=0, verify_seam=None, open_range=None,
                  dynamic_chunks=None, keepalive=None, dest_dir=None, unique=True,
-                 pool=None, single_request=False, small_limit=None):
+                 pool=None, single_request=False, small_limit=None, budget=None):
         self.url = url
         # 由服务端/队列指定"落到哪个目录"：dest 为空时用探测出的文件名拼上它
         self.dest_dir = dest_dir
@@ -444,6 +445,8 @@ class Download:
         # 小文件优先：一次 GET 完成探测+下载；超过 small_limit 且支持 Range 再回退分段
         self.single_request = bool(single_request)
         self.small_limit = int(small_limit or SMALL_LIMIT)
+        # 连接预算：批量里按 socket 计数（acquire/release），单文件下载时为 None
+        self._budget = budget
         # 自适应并发：收到 429 就把有效并发减半（只降不升，下限 1）
         self._active = 0
         self._active_cap = max(1, int(connections or 1))
@@ -951,6 +954,19 @@ class Download:
             last_done, last_t = cur, now
             self._emit()
 
+    @contextlib.contextmanager
+    def _slots(self, n):
+        """占用/归还连接预算（批量里按 socket 计数）。"""
+        n = max(1, int(n or 1))
+        if self._budget is None:
+            yield
+            return
+        self._budget.acquire(n)
+        try:
+            yield
+        finally:
+            self._budget.release(n)
+
     def run(self):
         self.status = "running"
         self.started_at = time.time()
@@ -960,14 +976,17 @@ class Download:
         try:
             if self.mirror:
                 # 镜像按请求数限流：不先 HEAD，直接用一次 GET 完成探测+拉流
-                return self._run_single_request()
+                with self._slots(1):
+                    return self._run_single_request()
             if self.single_request:
                 # 小文件优先：一次 GET 同时完成探测与下载；大文件回退分段
-                result = self._try_single_request()
+                with self._slots(1):
+                    result = self._try_single_request()
                 if result is not None:
                     return result
-            self.probe_info = probe(self.url, self.headers, self.proxy,
-                                    self.insecure, self.timeout)
+            with self._slots(1):
+                self.probe_info = probe(self.url, self.headers, self.proxy,
+                                        self.insecure, self.timeout)
             self.total = self.probe_info.total or 0
             # 探测时已跟随过重定向，取数直接用最终地址，避免每块都重定向一次
             self._fetch_url = self.probe_info.final_url or self.url
@@ -1010,12 +1029,15 @@ class Download:
 
             if not self.probe_info.ranges:
                 # 服务端不支持 Range：直接单连接整取
-                self._single_stream()
+                with self._slots(1):
+                    self._single_stream()
             else:
-                self._run_workers()
+                with self._slots(max(1, min(self.connections, len(self.segments)))):
+                    self._run_workers()
                 if self._fallback:
                     self._stop.clear()
-                    self._single_stream()
+                    with self._slots(1):
+                        self._single_stream()
 
             self._monitor_stop.set()
             mon.join(timeout=1)
@@ -1102,7 +1124,8 @@ class Download:
         self.done = 0
         if self.total:
             self._fh.truncate(0)
-        self._single_stream()
+        with self._slots(1):
+            self._single_stream()
 
     def _try_single_request(self):
         """小文件优先：一次 GET 完成探测+下载。

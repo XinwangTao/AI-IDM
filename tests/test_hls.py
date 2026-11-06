@@ -160,6 +160,17 @@ def main():
     results.append(("hls-manifest-fp", first_ok and second_ok,
                     {"first": first_ok, "second": second_ok}))
 
+    # 6. 取消：事件已置位时立即失败
+    evt = threading.Event()
+    evt.set()
+    try:
+        download_hls(f"{base}/hi/index.m3u8", os.path.join(work, "cancel.ts"),
+                     cancel_event=evt)
+        ok_cancel = False
+    except Exception as e:                                     # noqa: BLE001
+        ok_cancel = "已取消" in str(e)
+    results.append(("hls-cancel", ok_cancel, {}))
+
     print("\n=== 结果 ===")
     allok = True
     for name, ok, detail in results:

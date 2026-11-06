@@ -82,11 +82,12 @@ ai-idm batch urls.txt -o downloads/ --flat --concurrency 24 --per-host 3
 
 Small files use **one GET per file** (probe + download in a single request) and share a
 keep-alive connection pool across the whole batch; large files automatically fall back to
-segmented downloads. Global concurrency (default 16) and per-host concurrency (default 6)
-keep sites from being hammered. The batch writes `batch.json` and `failed.txt` into the
-output dir; one failing file never aborts the rest. The browser extension adds
-"download all links/images on this page" to the context menu, which starts one server-side
-batch job (`POST /batch`, progress via `GET /batch`, cancel via `POST /batch/cancel`).
+segmented downloads with `--file-connections` (default 4). Global concurrency (default 16)
+and per-host **socket** concurrency (default 6) keep sites from being hammered. The batch
+writes `batch.json` and `failed.txt` into the output dir; one failing file never aborts the
+rest. The browser extension adds "download all links/images on this page" to the context
+menu, which starts one server-side batch job (`POST /batch`, progress via `GET /batch`,
+cancel via `POST /batch/cancel`).
 
 ## CLI
 

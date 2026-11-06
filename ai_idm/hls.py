@@ -264,8 +264,11 @@ def _playlist_fp(media):
 
 def download_hls(url, dest, connections=8, quality="best", headers=None,
                  proxy=None, insecure=False, keep_segments=False,
-                 restart=False, progress=None, dest_dir=None, unique=True):
+                 restart=False, progress=None, dest_dir=None, unique=True,
+                 budget=None, cancel_event=None):
     headers = headers or {}
+    if cancel_event is not None and cancel_event.is_set():
+        raise HlsError("已取消")
     text, final_url = _fetch_text(url, headers, proxy, insecure)
 
     variant_info = None
@@ -333,6 +336,8 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
     lock = threading.Lock()
 
     def fetch_one(i):
+        if cancel_event is not None and cancel_event.is_set():
+            raise HlsError("已取消")
         path = seg_paths[i]
         if os.path.exists(path) and os.path.getsize(path) > 0:
             with lock:
@@ -364,7 +369,7 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
         else:
             # 复用分片下载器（单连接，单片内部不分段）
             Download(seg["url"], dest=path, connections=1, headers=headers,
-                     proxy=proxy, insecure=insecure).run()
+                     proxy=proxy, insecure=insecure, budget=budget).run()
         with lock:
             done_count[0] += 1
             if progress:
@@ -382,13 +387,19 @@ def download_hls(url, dest, connections=8, quality="best", headers=None,
         list(ex.map(safe_fetch, range(len(segs))))
 
     if errors:
+        if cancel_event is not None and cancel_event.is_set():
+            raise HlsError("已取消")
         raise HlsError(f"{len(errors)} 个分片失败，首个: 分片 {errors[0][0]} {errors[0][1]}")
+    if cancel_event is not None and cancel_event.is_set():
+        raise HlsError("已取消")
 
     tmp_out = dest + ".part"
     with open(tmp_out, "wb") as out:
         if media["init"]:
             out.write(_fetch_bytes(media["init"], headers, proxy, insecure, 60))
         for p in seg_paths:
+            if cancel_event is not None and cancel_event.is_set():
+                raise HlsError("已取消")
             with open(p, "rb") as f:
                 shutil.copyfileobj(f, out, 1 << 20)
     _replace_file(tmp_out, dest)

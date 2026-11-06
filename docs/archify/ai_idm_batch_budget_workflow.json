@@ -1,0 +1,198 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "批量内大文件多连接与取消（L1）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/ai_idm_batch_budget_workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "flow",
+      "label": "调度与下载"
+    },
+    {
+      "id": "budget",
+      "label": "连接预算"
+    },
+    {
+      "id": "cancel",
+      "label": "取消与失败",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "plan",
+      "label": "调度",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "run",
+      "label": "按预算取流",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "done",
+      "label": "收尾",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n6"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "flow",
+      "col": 0,
+      "type": "frontend",
+      "label": "批量任务",
+      "sublabel": "URL 清单",
+      "width": 100
+    },
+    {
+      "id": "n2",
+      "lane": "budget",
+      "col": 1,
+      "type": "security",
+      "label": "每站 socket 预算",
+      "sublabel": "per_host 个并发连接",
+      "width": 120
+    },
+    {
+      "id": "n3",
+      "lane": "flow",
+      "col": 2,
+      "type": "security",
+      "label": "文件大小",
+      "sublabel": "≤4MB / 更大",
+      "width": 100
+    },
+    {
+      "id": "n4",
+      "lane": "flow",
+      "col": 3,
+      "type": "backend",
+      "label": "单请求",
+      "sublabel": "占 1 个 socket",
+      "width": 100
+    },
+    {
+      "id": "n5",
+      "lane": "budget",
+      "col": 4,
+      "type": "backend",
+      "label": "分段下载",
+      "sublabel": "占 N 个 socket",
+      "width": 104
+    },
+    {
+      "id": "n6",
+      "lane": "flow",
+      "col": 5,
+      "type": "messagebus",
+      "label": "释放预算",
+      "sublabel": "完成/失败都归还",
+      "width": 108
+    },
+    {
+      "id": "f1",
+      "lane": "budget",
+      "col": 2,
+      "type": "messagebus",
+      "label": "预算不足",
+      "sublabel": "排队等待",
+      "width": 100
+    },
+    {
+      "id": "f2",
+      "lane": "cancel",
+      "col": 4,
+      "type": "security",
+      "label": "取消",
+      "sublabel": "HTTP + HLS 都可停",
+      "width": 112
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "label": "取得预算"
+    },
+    {
+      "from": "n3",
+      "to": "n4",
+      "label": "小文件"
+    },
+    {
+      "from": "n3",
+      "to": "n5",
+      "label": "大文件"
+    },
+    {
+      "from": "n4",
+      "to": "n6"
+    },
+    {
+      "from": "n5",
+      "to": "n6"
+    },
+    {
+      "from": "n2",
+      "to": "f1",
+      "label": "已满",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "f1",
+      "to": "n2",
+      "label": "有空位",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "f2",
+      "to": "n5",
+      "label": "停止",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "改什么",
+      "items": [
+        "每站限流从“按文件”改为“按 socket”：小文件占 1，大文件占 N",
+        "大文件在批量里也能多连接分段，不再被迫单连接",
+        "HLS 增加取消句柄，批量取消能中断正在跑的分片"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "边界",
+      "items": [
+        "预算用信号量，拿不到就排队，不会超发",
+        "完成/失败/取消都要归还预算，避免泄漏",
+        "HTTP 与 HLS 共用同一套取消信号"
+      ]
+    }
+  ]
+}

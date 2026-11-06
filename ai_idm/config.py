@@ -34,7 +34,8 @@ DEFAULTS = {
     "retain_days": 7,             # serve 启动时自动清理 N 天前的已完成/失败记录（0=不清理）
     # ---- 批量小文件 ----
     "batch_concurrency": 16,      # 全局并发文件数
-    "batch_per_host": 6,          # 同一站点最多同时几个文件（防限流）
+    "batch_per_host": 6,          # 同一站点最多几个并发 socket（小文件 1，大文件 N）
+    "batch_file_connections": 4,  # 批量里单个大文件用几个连接（不超过每站上限）
     "single_request": False,      # 小文件一次 GET（默认关：会失去 HEAD 里的文件名/校验信息；batch 自动开启）
 }
 
