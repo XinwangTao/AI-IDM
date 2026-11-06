@@ -1155,8 +1155,12 @@ class Download:
                 self._temp_path = self.dest + ".idmpart"
 
                 pos = 0
-                mon = threading.Thread(target=self._monitor, daemon=True)
-                mon.start()
+                # 小文件起监控线程 + fsync 是纯开销：线程创建和磁盘同步各占几毫秒，
+                # 批量下载几百个 20KB 文件时会被放大成主要成本。
+                big = (total == 0 or total >= (1 << 20))
+                mon = threading.Thread(target=self._monitor, daemon=True) if big else None
+                if mon is not None:
+                    mon.start()
                 with open(self._temp_path, "wb") as fh:
                     self._fh = fh
                     while not self._stop.is_set():
@@ -1170,10 +1174,12 @@ class Download:
                             self.done = pos
                         self._emit()
                     fh.flush()
-                    os.fsync(fh.fileno())
+                    if big:
+                        os.fsync(fh.fileno())
                 self._fh = None
-                self._monitor_stop.set()
-                mon.join(timeout=1)
+                if mon is not None:
+                    self._monitor_stop.set()
+                    mon.join(timeout=1)
 
                 if total and pos != total:
                     if abs(pos - total) <= SIZE_TOLERANCE:
