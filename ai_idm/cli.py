@@ -209,6 +209,57 @@ def cmd_hls(args):
     return 0
 
 
+def cmd_batch(args):
+    from . import batch as batchmod
+
+    urls = batchmod.read_urls(args.source)
+    if not urls:
+        print("清单为空")
+        return 1
+    cfg = cfgmod.load()
+    out_dir = os.path.abspath(args.output or os.getcwd())
+    concurrency = int(args.concurrency or cfg.get("batch_concurrency") or 16)
+    per_host = int(args.per_host or cfg.get("batch_per_host") or 6)
+    started = time.time()
+    last = [0.0]
+
+    def progress(done, total, nbytes, res):
+        if args.quiet:
+            return
+        now = time.time()
+        if now - last[0] < 0.4 and done < total:
+            return
+        last[0] = now
+        elapsed = max(0.001, now - started)
+        name = os.path.basename(res.get("dest") or "") or res.get("url") or ""
+        sys.stderr.write(f"\r[{done}/{total}] {done / elapsed:.1f} 文件/秒 "
+                         f"{_human(nbytes)}  {name[:44]:<44}")
+        sys.stderr.flush()
+
+    if not args.quiet:
+        print(f"共 {len(urls)} 个 URL；并发 {concurrency}，每站 {per_host}，输出 {out_dir}")
+    summary = batchmod.run_batch(
+        urls, out_dir, concurrency=concurrency, per_host=per_host,
+        resume=args.resume, dirs=not args.flat, overwrite=args.overwrite,
+        proxy=cfg.get("proxy"), insecure=args.insecure,
+        timeout=int(cfg.get("timeout") or 30),
+        max_retries=int(cfg.get("max_retries") or 4),
+        progress=progress, quiet=args.quiet)
+    if not args.quiet:
+        sys.stderr.write("\r" + " " * 90 + "\r")
+        sys.stderr.flush()
+    if args.json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        print(f"完成 {summary['done']}，跳过 {summary['skipped']}，失败 {summary['failed']}；"
+              f"耗时 {summary['elapsed_sec']}s（{summary['files_per_sec']} 文件/秒），"
+              f"共 {_human(summary['bytes'])}")
+        if summary["failed"]:
+            print(f"失败清单：{os.path.join(out_dir, 'failed.txt')}")
+            print("补下：ai-idm batch failed.txt -o " + out_dir + " --resume")
+    return 0 if summary["ok"] else 1
+
+
 def cmd_config(args):
     cfg = cfgmod.load()
     if args.action == "show":
@@ -649,6 +700,25 @@ def build_parser():
                      help="只删 N 天前的记录（省略=不限时间）")
     qpg.add_argument("--db")
     qpg.set_defaults(func=cmd_queue_purge)
+
+    # ---- batch ----
+    bp = sub.add_parser("batch", help="批量下载 URL 清单（小文件优先：共享连接 + 文件级并发）")
+    bp.add_argument("source", help="URL 清单文件（一行一个）；- 表示 stdin")
+    bp.add_argument("-o", "--output", default=None, help="输出目录（默认当前目录）")
+    bp.add_argument("--concurrency", type=int, default=None,
+                    help="全局并发文件数（默认取配置 16）")
+    bp.add_argument("--per-host", type=int, default=None,
+                    help="同一站点并发上限（默认取配置 6）")
+    bp.add_argument("--flat", action="store_true",
+                    help="不保留 host/路径结构，全部放输出目录")
+    bp.add_argument("--resume", action="store_true",
+                    help="跳过已存在且完整的文件，只补缺失/失败（配合 failed.txt 使用）")
+    bp.add_argument("--overwrite", action="store_true",
+                    help="目标已存在时覆盖（默认自动改名）")
+    bp.add_argument("--insecure", action="store_true")
+    bp.add_argument("--json", action="store_true")
+    bp.add_argument("-q", "--quiet", action="store_true")
+    bp.set_defaults(func=cmd_batch)
 
     # ---- update ----
     up = sub.add_parser("update", help="检查/安装更新（服务端 + 浏览器扩展）")

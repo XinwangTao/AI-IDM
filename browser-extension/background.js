@@ -541,6 +541,7 @@ const MENUS = [
   { id: "idm-link", title: "用 AI-IDM 下载此链接", contexts: ["link"] },
   { id: "idm-media", title: "用 AI-IDM 下载此媒体", contexts: ["video", "audio", "image"] },
   { id: "idm-page", title: "用 AI-IDM 下载当前页面", contexts: ["page"] },
+  { id: "idm-batch", title: "用 AI-IDM 下载本页所有链接/图片", contexts: ["page", "selection"] },
 ];
 
 function buildMenus() {
@@ -586,10 +587,47 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
+// 页面里收集可下载链接（在页面上下文执行，不能引用扩展的闭包）
+function collectPageUrls(limit) {
+  const out = new Set();
+  const add = (u) => {
+    try {
+      const x = new URL(u, location.href);
+      if (/^https?:$/.test(x.protocol)) out.add(x.href);
+    } catch (_) { /* 非法 URL 忽略 */ }
+  };
+  document.querySelectorAll("a[href]").forEach((a) => add(a.href));
+  document.querySelectorAll("img[src]").forEach((i) => add(i.currentSrc || i.src));
+  document.querySelectorAll("video[src], audio[src], source[src]").forEach((m) => add(m.src));
+  return Array.from(out).slice(0, limit);
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const c = await cfg();
   if (c.mode === "off") {
     notify("AI-IDM 已关闭", "在扩展选项里把接管模式改为「自动」或「手动」");
+    return;
+  }
+  if (info.menuItemId === "idm-batch") {
+    if (!tab || !tab.id) return;
+    try {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: collectPageUrls,
+        args: [1000],
+      });
+      const urls = (res && res[0] && res[0].result) || [];
+      if (!urls.length) {
+        notify("没有可下载的链接", "当前页面没有 http(s) 链接或图片");
+        return;
+      }
+      const r = await api("/batch", { method: "POST", body: { urls }, timeout: 20000 });
+      notify("已交给 AI-IDM 批量下载",
+             `新增 ${r.added || 0}，已存在 ${r.deduped || 0}，无效 ${r.invalid || 0}`);
+      await bumpBadge();
+    } catch (e) {
+      notify("批量加入失败", String(e.message || e));
+    }
     return;
   }
   const url = info.linkUrl || info.srcUrl || info.pageUrl;

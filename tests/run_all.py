@@ -35,6 +35,7 @@ TESTS = [
     "test_dedup_purge",  # /add 去重 / 队列清理 / ±1 字节容错
     "test_updater",      # 更新检查 / 脏工作区拒绝 / 更新 / 回滚
     "test_adaptive",     # 429 时自适应降并发
+    "test_batch",        # 批量小文件：并发上限 / 单请求 / 失败清单 / resume
 ]
 
 

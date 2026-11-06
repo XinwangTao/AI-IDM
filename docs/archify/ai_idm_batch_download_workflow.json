@@ -1,0 +1,224 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI-IDM 批量小文件下载（L2）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/ai_idm_batch_download_workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "prep",
+      "label": "清单与调度"
+    },
+    {
+      "id": "engine",
+      "label": "单文件引擎"
+    },
+    {
+      "id": "exceptions",
+      "label": "失败处理",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "prepare",
+      "label": "清单化",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "run",
+      "label": "并发下载",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "close",
+      "label": "收尾",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "prep",
+      "col": 0,
+      "type": "frontend",
+      "label": "批量输入",
+      "sublabel": "CLI 清单 / 扩展抓页",
+      "width": 108
+    },
+    {
+      "id": "n2",
+      "lane": "prep",
+      "col": 1,
+      "type": "backend",
+      "label": "规范化去重",
+      "sublabel": "URL + 落地路径",
+      "width": 104
+    },
+    {
+      "id": "n3",
+      "lane": "prep",
+      "col": 2,
+      "type": "security",
+      "label": "并发调度",
+      "sublabel": "全局 16 / 每站 6",
+      "width": 104
+    },
+    {
+      "id": "n4",
+      "lane": "engine",
+      "col": 3,
+      "type": "frontend",
+      "label": "单 GET 取流",
+      "sublabel": "小文件一次完成",
+      "width": 104
+    },
+    {
+      "id": "n5",
+      "lane": "engine",
+      "col": 4,
+      "type": "backend",
+      "label": "大文件回退",
+      "sublabel": "按 Range 分段",
+      "width": 100
+    },
+    {
+      "id": "n6",
+      "lane": "engine",
+      "col": 5,
+      "type": "messagebus",
+      "label": "共享连接池",
+      "sublabel": "跨文件 keep-alive",
+      "width": 108
+    },
+    {
+      "id": "n7",
+      "lane": "prep",
+      "col": 5,
+      "type": "frontend",
+      "label": "汇总与续跑",
+      "sublabel": "成功/失败清单",
+      "width": 108
+    },
+    {
+      "id": "f1",
+      "lane": "exceptions",
+      "col": 3,
+      "type": "security",
+      "label": "重试退避",
+      "sublabel": "429 降并发",
+      "width": 96
+    },
+    {
+      "id": "f2",
+      "lane": "exceptions",
+      "col": 4,
+      "type": "messagebus",
+      "label": "记入失败清单",
+      "sublabel": "下次 --resume 续跑",
+      "width": 108
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3"
+    },
+    {
+      "from": "n3",
+      "to": "n4",
+      "label": "取任务"
+    },
+    {
+      "from": "n4",
+      "to": "n5",
+      "label": "长度超阈值且支持 Range"
+    },
+    {
+      "from": "n4",
+      "to": "n6",
+      "label": "小文件"
+    },
+    {
+      "from": "n5",
+      "to": "n6",
+      "label": "分段写入"
+    },
+    {
+      "from": "n6",
+      "to": "n7",
+      "label": "完成"
+    },
+    {
+      "from": "n4",
+      "to": "f1",
+      "label": "请求失败",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "f1",
+      "to": "n4",
+      "label": "重试",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "f1",
+      "to": "f2",
+      "label": "超过上限",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "借鉴与取舍",
+      "items": [
+        "aria2：小文件不切段，并发放在文件之间",
+        "wget2：连接复用是小文件吞吐的最大杠杆",
+        "HTTP/2 多路复用受标准库限制，本轮不做",
+        "rclone：清单化 + 失败隔离 + 可续跑"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "验收",
+      "items": [
+        "200×20KB 实测 265.4s → 0.35s（约 758×，本机回环）",
+        "失败率 0，单个失败不拖垮整批",
+        "不触发目标站限流：每站并发有上限，429 继续降"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "入口",
+      "items": [
+        "ai-idm batch urls.txt -o DIR（保留目录结构）",
+        "扩展右键：下载本页所有链接/图片",
+        "服务端 /batch 复用同一调度器"
+      ]
+    }
+  ]
+}

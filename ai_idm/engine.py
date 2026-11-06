@@ -24,6 +24,7 @@ import urllib.request
 
 CHUNK = 64 * 1024
 MIN_SEG = 1 << 20           # 小于 2MB 的文件不分片
+SMALL_LIMIT = 4 << 20       # 小文件优先：不超过 4MB 用一次 GET 完成探测+下载
 SEAM = 64                   # 接缝重叠字节数（对应 IDM 日志里的 posInCmpBuff3=64）
 CHUNK_FACTOR = 4            # 动态分块：块数 ≈ 连接数 × 4（块越小，尾延迟越低）
 MAX_CHUNKS = 256            # 块数上限，避免状态文件与线程调度开销失控
@@ -67,6 +68,10 @@ def _retry_after(err, fallback):
 
 class DownloadError(RuntimeError):
     pass
+
+
+class _NeedSegments(Exception):
+    """单请求模式下发现是大文件：放弃当前响应，回退到探测+分段。"""
 
 
 class _UrllibStream:
@@ -385,7 +390,8 @@ class Download:
                  insecure=False, resume=True, verify=None, progress=None,
                  timeout=30, max_retries=4, state_dir=None, schedule=None,
                  verify_sample=0, verify_seam=None, open_range=None,
-                 dynamic_chunks=None, keepalive=None, dest_dir=None, unique=True):
+                 dynamic_chunks=None, keepalive=None, dest_dir=None, unique=True,
+                 pool=None, single_request=False, small_limit=None):
         self.url = url
         # 由服务端/队列指定"落到哪个目录"：dest 为空时用探测出的文件名拼上它
         self.dest_dir = dest_dir
@@ -414,6 +420,12 @@ class Download:
         self.keepalive = True if keepalive is None else bool(keepalive)
         # 同名文件不覆盖：默认自动改名，CLI 用 --overwrite 关掉
         self.unique = bool(unique)
+        # 批量/服务端可传入共享连接池，跨文件复用 keep-alive（小文件吞吐的关键）
+        self._pool = pool
+        self._owns_pool = False
+        # 小文件优先：一次 GET 完成探测+下载；超过 small_limit 且支持 Range 再回退分段
+        self.single_request = bool(single_request)
+        self.small_limit = int(small_limit or SMALL_LIMIT)
         # 自适应并发：收到 429 就把有效并发减半（只降不升，下限 1）
         self._active = 0
         self._active_cap = max(1, int(connections or 1))
@@ -425,7 +437,6 @@ class Download:
             self.dynamic_chunks = False
             self.keepalive = False
             self._active_cap = 1
-        self._pool = None
         self._fetch_url = None
         self.mismatch_detected = False
 
@@ -450,6 +461,7 @@ class Download:
         self._temp_path = None
         self._limiter = RateLimiter(limit_bps)
         self._fallback = False
+        self._monitor_stop = threading.Event()
         self.reassigned = 0     # 分片被移交给其他连接的次数（总数）
         self.handoffs = 0       # 其中"还没开始下"就被移交的次数（IDM: downloaded=0）
         self.seams_checked = 0
@@ -907,8 +919,10 @@ class Download:
 
     def _monitor(self):
         last_done, last_t = self.done, time.monotonic()
-        while not self._stop.is_set() and self.status == "running":
-            time.sleep(0.5)
+        while (not self._stop.is_set() and not self._monitor_stop.is_set()
+               and self.status == "running"):
+            if self._monitor_stop.wait(0.5):
+                break
             now = time.monotonic()
             dt = now - last_t
             if dt <= 0:
@@ -929,14 +943,20 @@ class Download:
             if self.mirror:
                 # 镜像按请求数限流：不先 HEAD，直接用一次 GET 完成探测+拉流
                 return self._run_single_request()
+            if self.single_request:
+                # 小文件优先：一次 GET 同时完成探测与下载；大文件回退分段
+                result = self._try_single_request()
+                if result is not None:
+                    return result
             self.probe_info = probe(self.url, self.headers, self.proxy,
                                     self.insecure, self.timeout)
             self.total = self.probe_info.total or 0
             # 探测时已跟随过重定向，取数直接用最终地址，避免每块都重定向一次
             self._fetch_url = self.probe_info.final_url or self.url
-            if self.keepalive:
+            if self._pool is None and self.keepalive:
                 from .pool import Pool
                 self._pool = Pool(self.proxy, self.insecure, self.timeout)
+                self._owns_pool = True
 
             if not self.dest:
                 self.dest = self.probe_info.filename
@@ -979,6 +999,7 @@ class Download:
                     self._stop.clear()
                     self._single_stream()
 
+            self._monitor_stop.set()
             mon.join(timeout=1)
             if self.error:
                 raise DownloadError(self.error)
@@ -1006,7 +1027,7 @@ class Download:
             if self.total and size < self.total:
                 raise DownloadError(f"大小不符: {size} != {self.total}")
 
-            if self._pool is not None:
+            if self._pool is not None and self._owns_pool:
                 self._pool.close()
             _replace_file(self._temp_path, self.dest)   # 原子搬运（带 Windows 占用重试）
             self._temp_path = None
@@ -1042,7 +1063,7 @@ class Download:
                 except OSError:
                     pass
                 self._fh = None
-            if self._pool is not None:
+            if self._pool is not None and self._owns_pool:
                 self._pool.close()
             if self.status == "error":
                 raise DownloadError(self.error) from e
@@ -1064,6 +1085,124 @@ class Download:
         if self.total:
             self._fh.truncate(0)
         self._single_stream()
+
+    def _try_single_request(self):
+        """小文件优先：一次 GET 完成探测+下载。
+
+        返回结果字典表示已完成；返回 None 表示这是大文件（且支持 Range），
+        调用方应回退到 probe + 分段。判断阈值是 self.small_limit。
+        429/5xx 与网络错误按指数退避重试，其余错误直接抛出。
+        """
+        for attempt in range(self.max_retries + 1):
+            try:
+                return self._single_attempt()
+            except _NeedSegments:
+                return None
+            except urllib.error.HTTPError as e:
+                if attempt < self.max_retries and e.code in RETRY_CODES:
+                    time.sleep(_retry_after(e, min(2 ** attempt * 0.5, 8)))
+                    continue
+                raise DownloadError(f"HTTP {e.code}") from e
+            except DownloadError as e:
+                m = re.search(r"HTTP (\d+)", str(e))
+                code = int(m.group(1)) if m else None
+                if attempt < self.max_retries and (code in RETRY_CODES or code is None):
+                    time.sleep(min(2 ** attempt * 0.5, 8))
+                    continue
+                raise
+            except (urllib.error.URLError, OSError) as e:
+                if attempt < self.max_retries:
+                    time.sleep(min(2 ** attempt * 0.5, 8))
+                    continue
+                raise DownloadError(str(e)) from e
+
+    def _single_attempt(self):
+        h = {"User-Agent": DEFAULT_UA}
+        h.update(self.headers)
+        try:
+            with self._open_stream(h) as resp:
+                if resp.status >= 400:
+                    raise DownloadError(f"HTTP {resp.status}")
+                total = int(resp.headers.get("Content-Length") or 0) or 0
+                ranges = "bytes" in (resp.headers.get("Accept-Ranges") or "").lower()
+                if total > self.small_limit and ranges and self.connections > 1:
+                    raise _NeedSegments()
+
+                final_url = resp.geturl()
+                self.total = total
+                self.segments = [Segment(0, 0, max(0, total - 1))]
+                self.probe_info = Probe(
+                    self.url, final_url, total, ranges,
+                    resp.headers.get("ETag"), resp.headers.get("Last-Modified"),
+                    _filename_from_headers(resp.headers, final_url),
+                    resp.headers.get("Content-Type"), resp.status)
+                self._fetch_url = final_url
+
+                if not self.dest:
+                    self.dest = self.probe_info.filename
+                if (self.dest_dir and not os.path.isabs(self.dest)
+                        and not os.path.dirname(self.dest)):
+                    self.dest = os.path.join(self.dest_dir, self.dest)
+                self.dest = os.path.abspath(self.dest)
+                if self.unique:
+                    new_dest = unique_path(self.dest)
+                    if new_dest != self.dest:
+                        self.dest = new_dest
+                parent = os.path.dirname(self.dest)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                self._state_path = self.dest + ".idmpart.json"
+                self._temp_path = self.dest + ".idmpart"
+
+                pos = 0
+                mon = threading.Thread(target=self._monitor, daemon=True)
+                mon.start()
+                with open(self._temp_path, "wb") as fh:
+                    self._fh = fh
+                    while not self._stop.is_set():
+                        chunk = resp.read(CHUNK)
+                        if not chunk:
+                            break
+                        self._limiter.consume(len(chunk))
+                        fh.write(chunk)
+                        pos += len(chunk)
+                        with self._lock:
+                            self.done = pos
+                        self._emit()
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                self._fh = None
+                self._monitor_stop.set()
+                mon.join(timeout=1)
+
+                if total and pos != total:
+                    if abs(pos - total) <= SIZE_TOLERANCE:
+                        self.total = pos
+                    else:
+                        raise DownloadError(f"大小不符: {pos} != {total}")
+                _replace_file(self._temp_path, self.dest)
+                self._temp_path = None
+                self.status = "done"
+                self.finished_at = time.time()
+                self.speed = 0.0
+                self.done = pos
+                self._emit(force=True)
+                if self._state_path and os.path.exists(self._state_path):
+                    try:
+                        os.remove(self._state_path)
+                    except OSError:
+                        pass
+                result = self.snapshot()
+                result["elapsed_sec"] = round(self.finished_at - self.started_at, 2)
+                if self.verify:
+                    hh = hashlib.new(self.verify)
+                    with open(self.dest, "rb") as f:
+                        for blk in iter(lambda: f.read(1 << 20), b""):
+                            hh.update(blk)
+                    result["checksum"] = {self.verify: hh.hexdigest()}
+                return result
+        except _NeedSegments:
+            return None
 
     def _run_single_request(self):
         """镜像站专用：**一次 GET 同时完成探测与下载**。
@@ -1119,6 +1258,7 @@ class Download:
                 fh.flush()
                 os.fsync(fh.fileno())
             self._fh = None
+            self._monitor_stop.set()
             mon.join(timeout=1)
 
             if total and pos < total:

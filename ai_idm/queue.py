@@ -240,6 +240,8 @@ class Runner:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads = []
+        self._pools = {}                     # proxy -> Pool，跨任务复用 keep-alive
+        self._pools_lock = threading.Lock()
 
     def stop(self):
         self._stop.set()
@@ -257,11 +259,36 @@ class Runner:
         self.q.reset_running()
         threads = [threading.Thread(target=self._worker, args=(idle_exit,), daemon=True)
                    for _ in range(self.parallel)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        finally:
+            if idle_exit:
+                self._close_pools()
         return self.q.stats()
+
+    def _pool_for(self, proxy):
+        """每个代理一个共享连接池：小文件批量下载的关键（跨文件复用 TCP/TLS）。"""
+        key = proxy or ""
+        with self._pools_lock:
+            pool = self._pools.get(key)
+            if pool is None:
+                from .pool import Pool
+                pool = Pool(proxy, False, 30)
+                self._pools[key] = pool
+            return pool
+
+    def _close_pools(self):
+        with self._pools_lock:
+            pools = list(self._pools.values())
+            self._pools.clear()
+        for pool in pools:
+            try:
+                pool.close()
+            except Exception:                                # noqa: BLE001
+                pass
 
     def _worker(self, idle_exit):
         while not self._stop.is_set():
@@ -315,6 +342,8 @@ class Runner:
             open_range=bool(cfg.get("open_range", False)),
             dynamic_chunks=bool(cfg.get("dynamic_chunks", True)),
             keepalive=bool(cfg.get("keepalive", True)),
+            single_request=bool(cfg.get("single_request", False)),
+            pool=self._pool_for(r["proxy"]),
             dest_dir=self.dest_dir,
         )
         last_save = 0.0

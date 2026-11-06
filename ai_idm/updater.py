@@ -222,10 +222,14 @@ class UpdateLock:
 
     def __exit__(self, *exc):
         if self.acquired:
-            try:
-                self.path.unlink()
-            except OSError:
-                pass
+            for _ in range(3):
+                try:
+                    self.path.unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    time.sleep(0.05)      # Windows 上偶发占用，删不掉就留着，下次按陈旧处理
         return False
 
 
@@ -307,10 +311,13 @@ def _due(st: dict, now: float) -> bool:
 
 
 def _clear_stale_apply(st: dict, now: float) -> dict:
-    """更新进程被杀后会留下 applying=true，不清掉就永远更新不了。"""
+    """更新进程被杀后会留下 applying=true，不清掉就永远更新不了。
+
+    只按 apply_started_at 判断：正常更新最慢也就 pip 的 10 分钟，30 分钟没结束
+    就一定是中断了。不用锁文件 mtime 判断——Windows 上锁文件可能因占用而删不掉，
+    会把后续更新永久挡住。
+    """
     if not st.get("applying"):
-        return st
-    if _lock_fresh():
         return st
     started = float(st.get("apply_started_at") or 0)
     if started and now - started < STALE_APPLY:
@@ -318,13 +325,6 @@ def _clear_stale_apply(st: dict, now: float) -> dict:
     log("检测到上次更新中断，解除 applying 锁")
     return write_state(applying=False, error="上次更新中断（进程失联），已解除锁定；"
                                              "如有残留 rebase 会在下次更新时自动清理")
-
-
-def _lock_fresh() -> bool:
-    try:
-        return time.time() - (home() / "update.lock").stat().st_mtime <= STALE_APPLY
-    except OSError:
-        return False
 
 
 def check(force: bool = False) -> dict:
