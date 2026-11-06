@@ -100,6 +100,7 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
     total = len(urls)
     results = []
     lock = threading.Lock()
+    external_stop = stop_event is not None
     stop_event = stop_event or threading.Event()
     host_sems = {}
     host_lock = threading.Lock()
@@ -108,6 +109,20 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
     bytes_done = [0]
     active = {}                     # url -> Download，用于 Ctrl+C 时真正停下
     active_lock = threading.Lock()
+
+    if external_stop:
+        # 服务端 /batch/cancel 走这条：事件一置位就取消正在下载的文件
+        def _cancel_on_stop():
+            stop_event.wait()
+            with active_lock:
+                running = list(active.values())
+            for dl in running:
+                try:
+                    dl.cancel()
+                except Exception:                              # noqa: BLE001
+                    pass
+
+        threading.Thread(target=_cancel_on_stop, daemon=True).start()
 
     def host_sem(host):
         with host_lock:

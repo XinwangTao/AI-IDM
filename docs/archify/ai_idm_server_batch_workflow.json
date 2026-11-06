@@ -1,0 +1,183 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI-IDM 服务端批量任务（L1）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/archify/ai_idm_server_batch_workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "flow",
+      "label": "提交与执行"
+    },
+    {
+      "id": "exceptions",
+      "label": "拒绝与取消",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "submit",
+      "label": "提交",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "run",
+      "label": "并发下载",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "report",
+      "label": "进度与收尾",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "flow",
+      "col": 0,
+      "type": "frontend",
+      "label": "扩展提交",
+      "sublabel": "POST /batch",
+      "width": 100
+    },
+    {
+      "id": "n2",
+      "lane": "flow",
+      "col": 1,
+      "type": "security",
+      "label": "已有任务?",
+      "sublabel": "同一时间只跑一个",
+      "width": 108
+    },
+    {
+      "id": "n3",
+      "lane": "flow",
+      "col": 2,
+      "type": "backend",
+      "label": "创建批量任务",
+      "sublabel": "后台线程",
+      "width": 104
+    },
+    {
+      "id": "n4",
+      "lane": "flow",
+      "col": 3,
+      "type": "messagebus",
+      "label": "批量引擎",
+      "sublabel": "16/6 并发 + 共享池",
+      "width": 112
+    },
+    {
+      "id": "n5",
+      "lane": "flow",
+      "col": 4,
+      "type": "frontend",
+      "label": "任务状态",
+      "sublabel": "完成/失败/字节",
+      "width": 100
+    },
+    {
+      "id": "n6",
+      "lane": "flow",
+      "col": 5,
+      "type": "frontend",
+      "label": "读取进度",
+      "sublabel": "GET /batch",
+      "width": 96
+    },
+    {
+      "id": "f1",
+      "lane": "exceptions",
+      "col": 1,
+      "type": "security",
+      "label": "409 拒绝",
+      "sublabel": "等当前任务结束",
+      "width": 100
+    },
+    {
+      "id": "f2",
+      "lane": "exceptions",
+      "col": 4,
+      "type": "security",
+      "label": "取消任务",
+      "sublabel": "POST /batch/cancel",
+      "width": 112
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "label": "空闲"
+    },
+    {
+      "from": "n2",
+      "to": "f1",
+      "label": "正在跑",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "from": "n3",
+      "to": "n4"
+    },
+    {
+      "from": "n4",
+      "to": "n5",
+      "label": "每完成一个"
+    },
+    {
+      "from": "n5",
+      "to": "n6",
+      "label": "弹窗/面板"
+    },
+    {
+      "from": "f2",
+      "to": "n4",
+      "label": "停止",
+      "variant": "dashed",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "改什么",
+      "items": [
+        "扩展批量不再逐个进队列，直接跑批量引擎",
+        "并发 16 / 每站 6（沿用配置），共享连接池与单请求",
+        "同一时间只允许一个批量任务，避免把站点打爆"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "边界",
+      "items": [
+        "批量任务只在服务端内存，重启即丢（文件已落盘）",
+        "取消会停止活动下载与未开始项",
+        "第二阶段：批量内大文件多连接（限流按 socket 计数）"
+      ]
+    }
+  ]
+}
