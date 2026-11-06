@@ -87,6 +87,27 @@ def _atomic_json(path, obj):
     os.replace(tmp, path)
 
 
+def _reserve_dest(path, reserved, lock, overwrite=False):
+    """在批次内原子地占住一个目标路径。
+
+    unique_path 那种"查完再写"在并发下会两个线程选中同一个名字，最终互相覆盖；
+    这里用集合 + 锁保证同一批次里不会有两个任务写同一个文件。
+    """
+    base, ext = os.path.splitext(path)
+    with lock:
+        i = 0
+        while True:
+            cand = path if i == 0 else f"{base} ({i}){ext}"
+            if cand not in reserved:
+                if i == 0 and overwrite:
+                    reserved.add(cand)
+                    return cand
+                if not os.path.exists(cand):
+                    reserved.add(cand)
+                    return cand
+            i += 1
+
+
 def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
               dirs=True, overwrite=False, proxy=None, insecure=False,
               timeout=30, max_retries=4, progress=None, stop_event=None,
@@ -109,18 +130,25 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
     bytes_done = [0]
     active = {}                     # url -> Download，用于 Ctrl+C 时真正停下
     active_lock = threading.Lock()
+    reserved = set()                # 批次内已占用的目标路径
+    reserved_lock = threading.Lock()
 
+    done_event = threading.Event()
     if external_stop:
-        # 服务端 /batch/cancel 走这条：事件一置位就取消正在下载的文件
+        # 服务端 /batch/cancel 走这条：事件一置位就取消正在下载的文件；
+        # 批次正常结束时 done_event 让监听线程退出，避免每跑一次泄漏一个线程。
         def _cancel_on_stop():
-            stop_event.wait()
-            with active_lock:
-                running = list(active.values())
-            for dl in running:
-                try:
-                    dl.cancel()
-                except Exception:                              # noqa: BLE001
-                    pass
+            while not done_event.is_set():
+                if not stop_event.wait(0.2):
+                    continue
+                with active_lock:
+                    running = list(active.values())
+                for dl in running:
+                    try:
+                        dl.cancel()
+                    except Exception:                          # noqa: BLE001
+                        pass
+                return
 
         threading.Thread(target=_cancel_on_stop, daemon=True).start()
 
@@ -146,15 +174,17 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
         try:
             if stop_event.is_set():
                 return {"url": url, "dest": dest, "status": "cancelled", "error": "已停止"}
+            # 批次内原子占位：同名文件并发时不会互相覆盖
+            dest = _reserve_dest(dest, reserved, reserved_lock, overwrite=overwrite)
             if url.lower().split("?")[0].endswith(".m3u8"):
                 from .hls import download_hls
                 res = download_hls(url, dest, connections=concurrency, proxy=proxy,
-                                   insecure=insecure, unique=not overwrite)
+                                   insecure=insecure, unique=False)
                 return {"url": url, "dest": res.get("dest", dest), "status": "done",
                         "bytes": res.get("size") or 0}
             dl = Download(url, dest=dest, connections=1, timeout=timeout,
                           max_retries=max_retries, proxy=proxy, insecure=insecure,
-                          unique=not overwrite, pool=pool, single_request=True)
+                          unique=False, pool=pool, single_request=True)
             with active_lock:
                 active[url] = dl
             try:
@@ -201,10 +231,11 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
         for f in futures:
             f.cancel()
         ex.shutdown(wait=False, cancel_futures=True)
-        pool.close()
         raise
     else:
         ex.shutdown(wait=True)
+    finally:
+        done_event.set()
         pool.close()
 
     elapsed = max(0.001, time.time() - started)

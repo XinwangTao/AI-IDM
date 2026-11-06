@@ -6,6 +6,18 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.18.1] - 2026-11-06
+
+### Fixed
+- **同批次同名文件并发互相覆盖。** `unique_path` 的“查完再写”不是原子的，两个线程可能选中
+  同一个目标并同时写同一个 `.idmpart`。现在批次内用集合 + 锁原子占位，第二个同名文件稳定
+  落到 `name (1).ext`，内容不再可能串写。
+- **服务端批量每跑一次泄漏一个监听线程。** 取消监听原来在 `stop_event` 上无限等待；
+  现在批次结束会唤醒并退出。取消状态改由任务字段记录，不再依赖 `stop_event` 的置位。
+
+### Changed
+- 服务端 `/batch` 提交时对 URL 去重（重复链接只下一次），`total` 为去重后的数量。
+
 ## [1.18.0] - 2026-11-06
 
 ### Changed

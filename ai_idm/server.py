@@ -768,6 +768,12 @@ class TakeoverServer:
                 invalid += 1
         if not valid:
             return 400, {"ok": False, "error": "没有合法的 http(s) URL"}
+        uniq, seen = [], set()
+        for url in valid:
+            if url not in seen:
+                seen.add(url)
+                uniq.append(url)
+        valid = uniq
 
         with self._batch_lock:
             job = self._batch_job
@@ -792,6 +798,7 @@ class TakeoverServer:
             if not job or job.get("status") != "running":
                 return 409, {"ok": False, "error": "没有正在跑的批量任务"}
             job["status"] = "cancelling"
+            job["cancelled"] = True
             job["stop"].set()
             return 200, {"ok": True, "id": job["id"], "status": "cancelling"}
 
@@ -823,7 +830,7 @@ class TakeoverServer:
             with self._batch_lock:
                 job.update(done=summary["done"], skipped=summary["skipped"],
                            failed=summary["failed"], bytes=summary["bytes"],
-                           status="cancelled" if job["stop"].is_set() else "done",
+                           status="cancelled" if job.get("cancelled") else "done",
                            elapsed_sec=summary["elapsed_sec"],
                            finished_at=time.time())
             self.push_event({"event": "batch_done", "id": job["id"], **summary})
