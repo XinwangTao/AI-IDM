@@ -6,6 +6,21 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.19.0] - 2026-11-06
+
+### Changed
+- **每站限流从“按文件”改为“按 socket”。** 小文件占 1 个连接，大文件按需占 N 个；
+  拿不到预算就排队，不会超发。批量内的大文件不再被迫单连接。
+- **批量大文件默认 4 连接**（`batch_file_connections` / `batch --file-connections`），
+  不会超过每站上限；`per_host` 现在是并发 socket 数。
+- **HLS 支持取消。** `download_hls(..., cancel_event=)`，批量取消能中断正在跑的分片
+  （分片级检查；单请求内的加密/合并仍会走到检查点）。
+
+### Verified
+- `big-multi-conn`：6MB 文件在批量里用 4 连接分段（7 次 Range 请求）；
+- `socket-budget`：两个大文件共享 2 个 socket，峰值并发 ≤2；
+- `hls-cancel`：取消事件置位后立即失败。
+
 ## [1.18.1] - 2026-11-06
 
 ### Fixed

@@ -825,6 +825,7 @@ class TakeoverServer:
                 proxy=cfg.get("proxy"),
                 timeout=int(cfg.get("timeout") or 30),
                 max_retries=int(cfg.get("max_retries") or 4),
+                file_connections=int(cfg.get("batch_file_connections") or 4),
                 progress=progress, stop_event=job["stop"],
                 write_manifest=False)
             with self._batch_lock:

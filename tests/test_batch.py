@@ -24,7 +24,9 @@ N = 60
 SIZE = 20 * 1024
 FILES = [bytes([i % 251]) * SIZE for i in range(N)]
 SAME = {"/a/x.bin": b"A" * 3000, "/b/x.bin": b"B" * 4000}
-STATE = {"inflight": 0, "peak": 0, "requests": 0, "flaky": 2, "bad_ok": False}
+BIG = bytes((i * 97 + 3) & 0xFF for i in range(6 * 1024 * 1024))
+STATE = {"inflight": 0, "peak": 0, "requests": 0, "flaky": 2, "bad_ok": False,
+         "ranges": []}
 LOCK = threading.Lock()
 
 
@@ -35,7 +37,7 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
     def _body(self):
-        p = self.path
+        p = self.path.split("?", 1)[0]
         # 先匹配具名文件：/flaky.bin 也以 /f 开头、.bin 结尾，不能先走通配
         if p == "/flaky.bin":
             return FILES[0], True
@@ -43,6 +45,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return b"", STATE["bad_ok"]
         if p == "/img":
             return b"\x89PNG\r\n\x1a\n" + b"0" * 100, True
+        if p == "/big.bin":
+            return BIG, True
         if p in SAME:
             return SAME[p], True
         if p.startswith("/f") and p.endswith(".bin"):
@@ -71,6 +75,21 @@ class H(http.server.BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+                return
+            rng = self.headers.get("Range")
+            if rng:
+                m = re.match(r"bytes=(\d+)-(\d*)", rng)
+                start = int(m.group(1))
+                end = min(int(m.group(2) or len(body) - 1), len(body) - 1)
+                part = body[start:end + 1]
+                with LOCK:
+                    STATE["ranges"].append((self.path.split("?", 1)[0], start))
+                self.send_response(206)
+                self.send_header("Content-Range",
+                                 f"bytes {start}-{end}/{len(body)}")
+                self.send_header("Content-Length", str(len(part)))
+                self.end_headers()
+                self.wfile.write(part)
                 return
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
@@ -150,6 +169,30 @@ def main():
                     s_same["done"] == 2 and len(names) == 2
                     and contents == {SAME["/a/x.bin"], SAME["/b/x.bin"]},
                     {"names": names, "done": s_same["done"]}))
+
+    # 大文件多连接：6MB 文件在批量里用 4 个连接分段
+    big_dir = os.path.join(work, "big")
+    with LOCK:
+        STATE["peak"] = 0
+        STATE["ranges"] = []
+    s_big = run_batch([f"{base}/big.bin"], big_dir, concurrency=4, per_host=6,
+                      dirs=False, file_connections=4)
+    big_path = os.path.join(big_dir, "big.bin")
+    big_ok = (s_big["done"] == 1 and os.path.exists(big_path)
+              and os.path.getsize(big_path) == len(BIG)
+              and len(STATE["ranges"]) >= 2 and STATE["peak"] <= 6)
+    results.append(("big-multi-conn", big_ok,
+                    {"ranges": len(STATE["ranges"]), "peak": STATE["peak"],
+                     "done": s_big["done"]}))
+
+    # 每站 socket 预算：两个大文件共享 2 个 socket
+    two_dir = os.path.join(work, "two")
+    with LOCK:
+        STATE["peak"] = 0
+    s_two = run_batch([f"{base}/big.bin", f"{base}/big.bin?copy=2"], two_dir,
+                      concurrency=4, per_host=2, dirs=False, file_connections=2)
+    results.append(("socket-budget", s_two["done"] == 2 and STATE["peak"] <= 2,
+                    {"done": s_two["done"], "peak": STATE["peak"]}))
 
     # CLI 入口
     import json

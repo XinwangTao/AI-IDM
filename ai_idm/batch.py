@@ -30,6 +30,39 @@ RESERVED_NAMES = frozenset(
 )
 
 
+class _HostBudget:
+    """按 socket 计数的每站预算（engine.Download 的 budget 接口）。"""
+
+    def __init__(self, sem):
+        self.sem = sem
+        self.lock = threading.Lock()
+        self.used = 0
+
+    def acquire(self, n=1):
+        n = max(1, int(n))
+        for _ in range(n):
+            self.sem.acquire()
+        with self.lock:
+            self.used += n
+
+    def release(self, n=1):
+        n = max(1, int(n))
+        with self.lock:
+            self.used = max(0, self.used - n)
+        for _ in range(n):
+            self.sem.release()
+
+
+class _HlsHandle:
+    """HLS 任务的取消句柄（批量取消时由监听线程调用）。"""
+
+    def __init__(self):
+        self.evt = threading.Event()
+
+    def cancel(self):
+        self.evt.set()
+
+
 def read_urls(source):
     """读取 URL 清单：一行一个，# 开头为注释，保持首次出现顺序并去重。"""
     if source in ("-", "", None):
@@ -111,7 +144,7 @@ def _reserve_dest(path, reserved, lock, overwrite=False):
 def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
               dirs=True, overwrite=False, proxy=None, insecure=False,
               timeout=30, max_retries=4, progress=None, stop_event=None,
-              write_manifest=True, quiet=False):
+              write_manifest=True, quiet=False, file_connections=4):
     """并发下载清单里的 URL，返回汇总 dict。
 
     失败不影响其他文件；结束时写 batch.json 与 failed.txt，--resume 只补缺失/失败。
@@ -123,7 +156,7 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
     lock = threading.Lock()
     external_stop = stop_event is not None
     stop_event = stop_event or threading.Event()
-    host_sems = {}
+    host_budgets = {}
     host_lock = threading.Lock()
     pool = Pool(proxy, insecure, timeout)
     started = time.time()
@@ -152,13 +185,13 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
 
         threading.Thread(target=_cancel_on_stop, daemon=True).start()
 
-    def host_sem(host):
+    def host_budget(host):
         with host_lock:
-            sem = host_sems.get(host)
-            if sem is None:
-                sem = threading.BoundedSemaphore(max(1, per_host))
-                host_sems[host] = sem
-            return sem
+            budget = host_budgets.get(host)
+            if budget is None:
+                budget = _HostBudget(threading.BoundedSemaphore(max(1, per_host)))
+                host_budgets[host] = budget
+            return budget
 
     def one(url):
         dest = dest_for(url, out_dir, dirs)
@@ -169,8 +202,8 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
                             "bytes": os.path.getsize(dest)}
             except OSError:
                 pass
-        sem = host_sem(urlsplit(url).hostname or "")
-        sem.acquire()
+        host = urlsplit(url).hostname or ""
+        budget = host_budget(host)
         try:
             if stop_event.is_set():
                 return {"url": url, "dest": dest, "status": "cancelled", "error": "已停止"}
@@ -178,13 +211,23 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
             dest = _reserve_dest(dest, reserved, reserved_lock, overwrite=overwrite)
             if url.lower().split("?")[0].endswith(".m3u8"):
                 from .hls import download_hls
-                res = download_hls(url, dest, connections=concurrency, proxy=proxy,
-                                   insecure=insecure, unique=False)
+                handle = _HlsHandle()
+                with active_lock:
+                    active[url] = handle
+                try:
+                    res = download_hls(url, dest, proxy=proxy, insecure=insecure,
+                                       connections=max(1, min(per_host, 8)),
+                                       unique=False, budget=budget,
+                                       cancel_event=handle.evt)
+                finally:
+                    with active_lock:
+                        active.pop(url, None)
                 return {"url": url, "dest": res.get("dest", dest), "status": "done",
                         "bytes": res.get("size") or 0}
-            dl = Download(url, dest=dest, connections=1, timeout=timeout,
-                          max_retries=max_retries, proxy=proxy, insecure=insecure,
-                          unique=False, pool=pool, single_request=True)
+            dl = Download(url, dest=dest, connections=max(1, int(file_connections)),
+                          timeout=timeout, max_retries=max_retries, proxy=proxy,
+                          insecure=insecure, unique=False, pool=pool,
+                          single_request=True, budget=budget)
             with active_lock:
                 active[url] = dl
             try:
@@ -196,8 +239,6 @@ def run_batch(urls, out_dir, concurrency=16, per_host=6, resume=False,
                     "bytes": r.get("downloaded") or 0}
         except Exception as e:                                 # noqa: BLE001
             return {"url": url, "dest": dest, "status": "failed", "error": str(e)}
-        finally:
-            sem.release()
 
     def wrapped(url):
         res = one(url)

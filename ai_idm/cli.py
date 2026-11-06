@@ -245,6 +245,8 @@ def cmd_batch(args):
             proxy=cfg.get("proxy"), insecure=args.insecure,
             timeout=int(cfg.get("timeout") or 30),
             max_retries=int(cfg.get("max_retries") or 4),
+            file_connections=int(args.file_connections
+                                 or cfg.get("batch_file_connections") or 4),
             progress=progress, quiet=args.quiet)
     except KeyboardInterrupt:
         if not args.quiet:
@@ -714,7 +716,9 @@ def build_parser():
     bp.add_argument("--concurrency", type=int, default=None,
                     help="全局并发文件数（默认取配置 16）")
     bp.add_argument("--per-host", type=int, default=None,
-                    help="同一站点并发上限（默认取配置 6）")
+                    help="同一站点并发 socket 上限（默认取配置 6）")
+    bp.add_argument("--file-connections", type=int, default=None,
+                    help="批量里单个大文件的连接数（默认取配置 4，不会超过每站上限）")
     bp.add_argument("--flat", action="store_true",
                     help="不保留 host/路径结构，全部放输出目录")
     bp.add_argument("--resume", action="store_true",
