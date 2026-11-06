@@ -6,6 +6,18 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.17.2] - 2026-11-06
+
+### Fixed
+- **批量路径会写进 Windows 设备。** URL 末段是 `CON` / `NUL` / `COM1`… 时会被当成设备名；
+  现在统一加前缀（`_CON`），同时清理控制字符和结尾的点/空格。
+- **批量 Ctrl+C 停不下来。** 以前要等所有任务跑完；现在会取消正在下载的文件与未开始的任务，
+  已完成文件保留，重跑加 `--resume` 即可续。
+
+### Added
+- URL 没有扩展名时按响应 `Content-Type` 推断（`image/png` → `.png`、`application/pdf` → `.pdf` 等），
+  批量不再把 CDN 链接全存成 `.bin`。
+
 ## [1.17.1] - 2026-11-06
 
 ### Changed

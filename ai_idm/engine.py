@@ -35,6 +35,24 @@ DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-IDM/1.12"
 SIZE_TOLERANCE = 1
 DEFAULT_CONNECTIONS = 8
 
+# 批量模式跳过 HEAD，URL 又没有扩展名时（CDN 常见 /download?id=1），
+# 用响应头 Content-Type 猜一个扩展名，避免所有文件都叫 *.bin。
+MIME_EXT = {
+    "text/html": ".html", "text/plain": ".txt", "text/css": ".css",
+    "application/json": ".json", "application/javascript": ".js",
+    "text/javascript": ".js", "application/pdf": ".pdf", "application/zip": ".zip",
+    "application/xml": ".xml", "text/xml": ".xml", "text/csv": ".csv",
+    "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+    "image/webp": ".webp", "image/svg+xml": ".svg", "image/avif": ".avif",
+    "video/mp4": ".mp4", "video/webm": ".webm", "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg", "font/woff2": ".woff2",
+}
+
+
+def _mime_ext(content_type):
+    ct = (content_type or "").split(";")[0].strip().lower()
+    return MIME_EXT.get(ct, "")
+
 # GitHub「下载加速」镜像站：它们按**请求数**限流（429 + Retry-After），
 # 并发多连接必然触发限流，所以对这些域名强制单连接串行取流。
 GITHUB_MIRROR_HOSTS = frozenset({
@@ -1144,6 +1162,12 @@ class Download:
                         and not os.path.dirname(self.dest)):
                     self.dest = os.path.join(self.dest_dir, self.dest)
                 self.dest = os.path.abspath(self.dest)
+                base = os.path.basename(self.dest)
+                ext = os.path.splitext(base)[1].lower()
+                if ext == "" or base in ("download.bin", "index.bin"):
+                    guess = _mime_ext(resp.headers.get("Content-Type"))
+                    if guess and guess != ext:
+                        self.dest = (self.dest[:-len(ext)] if ext else self.dest) + guess
                 if self.unique:
                     new_dest = unique_path(self.dest)
                     if new_dest != self.dest:
