@@ -32,6 +32,10 @@ DEFAULTS = {
     "download_dir": "",           # 空=自动（~/Downloads，没有则当前目录）
     "dedup_add": True,            # /add 去重：同 url+dest+headers+proxy 的活跃任务只保留一个
     "retain_days": 7,             # serve 启动时自动清理 N 天前的已完成/失败记录（0=不清理）
+    # ---- 批量小文件 ----
+    "batch_concurrency": 16,      # 全局并发文件数
+    "batch_per_host": 6,          # 同一站点最多同时几个文件（防限流）
+    "single_request": False,      # 小文件一次 GET（默认关：会失去 HEAD 里的文件名/校验信息；batch 自动开启）
 }
 
 
@@ -55,7 +59,8 @@ def config_path():
     return os.path.join(home(), "config.json")
 
 
-BOOL_KEYS = ("seam_verify", "open_range", "dynamic_chunks", "keepalive", "dedup_add")
+BOOL_KEYS = ("seam_verify", "open_range", "dynamic_chunks", "keepalive", "dedup_add",
+             "single_request")
 
 
 def _coerce_bool(v):

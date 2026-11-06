@@ -497,6 +497,8 @@ class TakeoverServer:
                     return
                 if path == "/add":
                     return self._handle_add(payload)
+                if path == "/batch":
+                    return self._handle_batch(payload)
                 if path.startswith("/cancel/"):
                     return self._handle_cancel(path.rsplit("/", 1)[-1])
                 if path.startswith("/remove/"):
@@ -579,6 +581,57 @@ class TakeoverServer:
                 if deduped:
                     resp["deduped"] = True
                 return self._json(200, resp)
+
+            def _handle_batch(self, p):
+                """扩展“抓当前页全部链接/图片”入口：批量入队，复用队列去重。"""
+                urls = p.get("urls")
+                if not isinstance(urls, list) or not urls:
+                    return self._json(400, {"ok": False, "error": "urls 必须是非空数组"})
+                if len(urls) > 2000:
+                    return self._json(400, {"ok": False, "error": "单次最多 2000 个 URL"})
+                added = deduped = invalid = 0
+                for raw in urls:
+                    if not isinstance(raw, str):
+                        invalid += 1
+                        continue
+                    try:
+                        url = validate_url(raw.strip())
+                    except ValueError:
+                        invalid += 1
+                        continue
+                    path = urllib.parse.urlsplit(url).path
+                    name = sanitize_filename(
+                        os.path.basename(urllib.parse.unquote(path)) or "")
+                    if url.lower().split("?")[0].endswith(".m3u8"):
+                        # HLS 走内存任务（分片合并），不进普通队列
+                        try:
+                            app.start_hls(url, name or None, {}, None)
+                            added += 1
+                        except Exception:                    # noqa: BLE001
+                            invalid += 1
+                        continue
+                    dest = os.path.join(app.download_dir, name) if name else None
+                    r = cfgmod.resolve(url, app.cfg)
+                    try:
+                        if bool(app.cfg.get("dedup_add", True)):
+                            _row, dup = app.q.find_or_add(
+                                url, dest=dest, connections=r["connections"],
+                                limit_bps=r["limit_bps"], proxy=r["proxy"],
+                                headers={}, priority=0)
+                            if dup:
+                                deduped += 1
+                            else:
+                                added += 1
+                        else:
+                            app.q.add(url, dest=dest, connections=r["connections"],
+                                      limit_bps=r["limit_bps"], proxy=r["proxy"],
+                                      headers={}, priority=0)
+                            added += 1
+                    except Exception:                        # noqa: BLE001
+                        invalid += 1
+                app.push_event({"event": "batch", "added": added, "deduped": deduped})
+                return self._json(200, {"ok": True, "added": added,
+                                        "deduped": deduped, "invalid": invalid})
 
             def _handle_cancel(self, tid):
                 if app.runner and app.runner.cancel(tid):

@@ -67,6 +67,26 @@ rolled back to the previous commit. Flow diagram:
 Optional autostart (Windows): `python scripts/install_autostart.py`
 (`--remove` / `--status`).
 
+## Batch downloads (many small files)
+
+```bash
+# one URL per line; keeps <host>/<path> under the output dir
+ai-idm batch urls.txt -o downloads/
+
+# retry only what failed or is missing (resume reads failed.txt / existing files)
+ai-idm batch downloads/failed.txt -o downloads/ --resume
+
+# flat layout, higher concurrency, 3 files per host
+ai-idm batch urls.txt -o downloads/ --flat --concurrency 24 --per-host 3
+```
+
+Small files use **one GET per file** (probe + download in a single request) and share a
+keep-alive connection pool across the whole batch; large files automatically fall back to
+segmented downloads. Global concurrency (default 16) and per-host concurrency (default 6)
+keep sites from being hammered. The batch writes `batch.json` and `failed.txt` into the
+output dir; one failing file never aborts the rest. The browser extension adds
+"download all links/images on this page" to the context menu, which uses `POST /batch`.
+
 ## CLI
 
 ```bash
