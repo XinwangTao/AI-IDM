@@ -821,7 +821,7 @@ def serve(host=None, port=None, token=None, parallel=None, download_dir=None,
         print(f"  地址    : {base}", flush=True)
         print(f"  令牌    : {srv.token}", flush=True)
         print(f"  下载目录: {srv.download_dir}", flush=True)
-        print(f"  面板    : {base}/?token={srv.token}", flush=True)
+        print(f"  面板    : {base}/#token={srv.token}", flush=True)
         print(f"  队列    : {'自动下载' if run_downloads else '仅入队（需另跑 ai-idm queue run）'}",
               flush=True)
         print("  扩展    : chrome://extensions → 开发者模式 → 加载已解压的扩展程序 → 选 browser-extension/",
@@ -885,8 +885,11 @@ code{background:#eef1f5;padding:1px 5px;border-radius:4px;font-size:12px}
 <script>
 const $=(s)=>document.querySelector(s);
 const q=new URLSearchParams(location.search);
-let token=q.get("token")||localStorage.getItem("aiidm_token")||"";
-if(q.get("token"))localStorage.setItem("aiidm_token",q.get("token"));
+const h=(location.hash||"").startsWith("#token=")?decodeURIComponent(location.hash.slice(7)):"";
+let token=q.get("token")||h||localStorage.getItem("aiidm_token")||"";
+if(token)localStorage.setItem("aiidm_token",token);
+// 令牌不留在地址栏/历史里：拿到就清掉片段（查询参数仅兼容旧链接）
+if(location.hash||q.get("token"))history.replaceState(null,"",location.pathname);
 $("#tok").value=token;
 function save(){token=$("#tok").value.trim();localStorage.setItem("aiidm_token",token);tick();}
 function fmt(n){if(!n)return "-";const u=["B","KB","MB","GB","TB"];let v=n,i=0;

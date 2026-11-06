@@ -133,6 +133,7 @@ def cmd_get(args):
                         else bool(cfg.get("dynamic_chunks", True))),
         keepalive=(False if args.no_keepalive
                    else bool(cfg.get("keepalive", True))),
+        unique=not args.overwrite,
     )
     try:
         result = dl.run()
@@ -195,7 +196,8 @@ def cmd_hls(args):
         r = download_hls(args.url, args.output, connections=args.connections,
                          quality=args.quality, headers=headers, proxy=args.proxy,
                          insecure=args.insecure, keep_segments=args.keep_segments,
-                         restart=args.restart, progress=progress)
+                         restart=args.restart, progress=progress,
+                         unique=not args.overwrite)
     except HlsError as e:
         if not args.quiet:
             sys.stderr.write("\n")
@@ -525,6 +527,8 @@ def build_parser():
     g.add_argument("--insecure", action="store_true", help="跳过 TLS 证书校验")
     g.add_argument("--no-resume", action="store_true", help="不读取断点状态，重新下载")
     g.add_argument("--checksum", choices=["md5", "sha256"], help="下载完成后计算校验和")
+    g.add_argument("--overwrite", action="store_true",
+                   help="目标已存在时直接覆盖（默认自动改名为 name (1).ext）")
     g.add_argument("-q", "--quiet", action="store_true")
     g.set_defaults(func=cmd_get)
 
@@ -553,6 +557,8 @@ def build_parser():
     h.add_argument("--insecure", action="store_true")
     h.add_argument("--keep-segments", action="store_true", help="保留下载的分片目录")
     h.add_argument("--restart", action="store_true", help="丢弃已下分片重新开始")
+    h.add_argument("--overwrite", action="store_true",
+                   help="目标已存在时直接覆盖（默认自动改名为 name (1).ts）")
     h.add_argument("-q", "--quiet", action="store_true")
     h.set_defaults(func=cmd_hls)
 

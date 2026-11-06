@@ -111,6 +111,23 @@ def main():
     results.append(("multipart", r["status"] == "done" and sha256(dest) == expect and distinct >= 2,
                     {"ranges_seen": distinct, "size": os.path.getsize(dest), "sec": r.get("elapsed_sec")}))
 
+    # --- 2b. 同名文件不覆盖：自动改名 ---
+    dest_u = os.path.join(WORK, "dup.bin")
+    for f in (dest_u, dest_u + ".idmpart", dest_u + ".idmpart.json"):
+        if os.path.exists(f):
+            os.remove(f)
+    with open(dest_u, "wb") as f:
+        f.write(b"keep me")
+    ru = Download(url, dest=dest_u, connections=2).run()
+    kept = open(dest_u, "rb").read() == b"keep me"
+    results.append(("unique-name",
+                    ru["status"] == "done" and ru["dest"] != dest_u and kept
+                    and os.path.basename(ru["dest"]).startswith("dup (1)"),
+                    {"dest": os.path.basename(ru["dest"])}))
+    for f in (dest_u, ru["dest"], dest_u + ".idmpart.json"):
+        if os.path.exists(f):
+            os.remove(f)
+
     # --- 3. 限速 + 取消 + 续传 ---
     dest2 = os.path.join(WORK, "b.bin")
     for f in (dest2, dest2 + ".idmpart.json"):

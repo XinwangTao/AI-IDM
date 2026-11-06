@@ -6,6 +6,23 @@
 All notable changes to this project. Versions are `MAJOR.MINOR.PATCH`; before 2.0 the CLI flags may
 still change.
 
+## [1.16.0] - 2026-11-06
+
+### Changed
+- **同名文件不再静默覆盖。** HTTP/FTP/HLS 落地时目标已存在就自动改名为 `name (1).ext`；
+  CLI 用 `--overwrite` 关掉。续传（有分片状态/工作目录）仍沿用原文件名。
+- **HLS 分片按清单指纹复用。** 分片地址、密钥或 init 任一变化就会作废旧分片重下，
+  避免换片源后把旧内容拼进新文件。
+- **429 自适应并发。** 服务端限流时把有效并发减半（只降不升，下限 1），不再只靠硬编码
+  镜像名单；快照新增 `connection_cap` / `adaptive_downs`。
+- **面板令牌不再走 URL 查询。** 打印的链接改为 `#token=` 片段，页面读到后立即存入
+  localStorage 并清掉地址栏；`?token=` 仍兼容旧链接。
+- 连接池路径上的 4xx/5xx 会如实报出状态码并遵循 `Retry-After`（以前被当成"连接提前结束"）。
+
+### Added
+- `tests/test_adaptive.py`：429 时降并发仍能完整下载。
+- `test_local` 增加同名文件改名、续传缺临时文件用例；`test_hls` 增加清单指纹用例。
+
 ## [1.15.4] - 2026-11-05
 
 ### Fixed
