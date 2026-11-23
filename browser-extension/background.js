@@ -643,6 +643,78 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
+// ---------------------------------------------------------------- 历史重放拦截
+//
+// Edge/Chrome 更新后重启时，浏览器偶尔会把「下载历史」当成新下载逐条重放
+// （2026-11-23 实测 Edge 158.0.4370.33：重启后 1 秒内重放 114 条历史下载）。
+// 这些文件本地早就有了，交给 AI-IDM 只会把历史全部重下一遍。
+// 判定：REPLAY_WINDOW_MS 内出现 >= REPLAY_THRESHOLD 个自动接管请求 → 视为重放，
+// 整批取消，并撤销这一批已经入队的任务；随后 REPLAY_BLOCK_MS 内持续拦截，
+// 覆盖重放尾部。单个下载 / 正常连续下载不受影响（阈值 5 个/3 秒）。
+const REPLAY_WINDOW_MS = 3000;
+const REPLAY_THRESHOLD = 5;
+const REPLAY_BLOCK_MS = 60 * 1000;
+
+let autoTakes = [];              // 滑动窗口：最近自动接管的时间戳
+let recentAutoTids = [];         // 滑动窗口：最近自动入队的 tid，用于重放时撤回
+let replayBlockUntil = 0;        // 判定为重放后的强制拦截截止时间
+let replayBlocked = 0;           // 本次重放已拦截的数量（通知用）
+let replayNotifyTimer = null;
+
+/** 记录一次自动接管请求，返回当前窗口内的数量。 */
+function noteAutoTake() {
+  const now = Date.now();
+  autoTakes = autoTakes.filter((t) => now - t < REPLAY_WINDOW_MS);
+  autoTakes.push(now);
+  return autoTakes.length;
+}
+
+/** 重放期间只弹一条汇总通知：每来一个就顺延，等这一批停下来再报数，避免刷屏。 */
+function scheduleReplayNotify() {
+  if (replayNotifyTimer) clearTimeout(replayNotifyTimer);
+  replayNotifyTimer = setTimeout(() => {
+    replayNotifyTimer = null;
+    if (!replayBlocked) return;
+    const n = replayBlocked;
+    replayBlocked = 0;
+    notify("AI-IDM 已拦截浏览器重放的历史下载",
+           `浏览器重启后把下载历史重放了一遍，已拦截 ${n} 个，未重复下载`);
+  }, 1500);
+}
+
+/** 取消浏览器自己的下载项，并清理它留下的临时文件（时序与原实现一致）。 */
+async function discardBrowserItem(item) {
+  try {
+    await chrome.downloads.cancel(item.id);
+  } catch (_) {
+    return false;                 // 已经下完/取消不掉，就不要抢
+  }
+  // 取消后必须给浏览器一点时间删掉自己的临时文件（未确认 NNNNNN.crdownload），
+  // 否则立刻 erase 会让那个 0 字节的空壳变成孤儿文件，用户看到就以为下崩了。
+  setTimeout(() => {
+    chrome.downloads.erase({ id: item.id }, () => {
+      void chrome.runtime.lastError;
+      // 再做一次，覆盖 cancel→interrupt 的时序差
+      setTimeout(() => chrome.downloads.erase({ id: item.id }, () => void chrome.runtime.lastError), 600);
+    });
+  }, 900);
+  return true;
+}
+
+/** 撤回本次重放窗口内已经交给 AI-IDM 的任务（判定发生在第 5 个时，前几个可能已入队）。 */
+async function revokeRecentAutoTakes(now) {
+  const stale = recentAutoTids.filter((r) => now - r.at <= REPLAY_WINDOW_MS);
+  recentAutoTids = recentAutoTids.filter((r) => now - r.at > REPLAY_WINDOW_MS);
+  let revoked = 0;
+  for (const r of stale) {
+    try {
+      await api(`/cancel/${r.tid}`, { method: "POST", timeout: 3000 });
+      revoked++;
+    } catch (_) { /* 已下完/已取消：忽略 */ }
+  }
+  return revoked;
+}
+
 // ---------------------------------------------------------------- 自动接管
 
 chrome.downloads.onCreated.addListener(async (item) => {
@@ -653,32 +725,45 @@ chrome.downloads.onCreated.addListener(async (item) => {
   if (item.byExtensionId === chrome.runtime.id) return;      // 我们自己的回退下载，别再抓一次
   if (isLoopback(item.url)) return;                          // 回环任意端口：服务/本机来源不接管
   if (SKIP_PATTERNS.some((re) => re.test(item.url))) return; // 浏览器/商店的更新包
-  if (!(await online())) return;                             // 服务没开：不动浏览器的下载
 
-  const filename = basename(item.filename);
-  try {
-    await chrome.downloads.cancel(item.id);
-  } catch (e) {
-    // 已经下完/取消不掉，就不要抢
+  // 已进入重放拦截期：不再请求服务，直接丢弃浏览器重放出来的下载项
+  if (Date.now() < replayBlockUntil) {
+    replayBlocked++;
+    scheduleReplayNotify();
+    await discardBrowserItem(item);
     return;
   }
 
-  // 取消后必须给浏览器一点时间删掉自己的临时文件（未确认 NNNNNN.crdownload），
-  // 否则立刻 erase 会让那个 0 字节的空壳变成孤儿文件，用户看到就以为下崩了。
-  setTimeout(() => {
-    chrome.downloads.erase({ id: item.id }, () => {
-      void chrome.runtime.lastError;
-      // 再做一次，覆盖 cancel→interrupt 的时序差
-      setTimeout(() => chrome.downloads.erase({ id: item.id }, () => void chrome.runtime.lastError), 600);
-    });
-  }, 900);
+  if (!(await online())) return;                             // 服务没开：不动浏览器的下载
+
+  const filename = basename(item.filename);
+  if (!(await discardBrowserItem(item))) return;
+  const seen = noteAutoTake();
+
+  // 窗口内突发大量下载：浏览器在重放历史，不是用户逐条点的，整批拦截
+  if (seen >= REPLAY_THRESHOLD) {
+    const now = Date.now();
+    replayBlockUntil = now + REPLAY_BLOCK_MS;
+    const revoked = await revokeRecentAutoTakes(now);
+    replayBlocked += revoked + 1;
+    scheduleReplayNotify();
+    return;
+  }
 
   try {
-    await send(item.url, {
+    const data = await send(item.url, {
       referer: item.referrer || undefined,
       filename,
       source: "auto",
     });
+    // 入队途中若已判定为重放，刚入队的这条也要撤掉
+    if (Date.now() < replayBlockUntil) {
+      try { await api(`/cancel/${data.id}`, { method: "POST", timeout: 3000 }); } catch (_) { /* ignore */ }
+    } else if (data && data.id) {
+      // 只留最近一个窗口的 tid：撤回只可能用到这几秒内的任务
+      recentAutoTids = recentAutoTids.filter((r) => Date.now() - r.at <= REPLAY_WINDOW_MS);
+      recentAutoTids.push({ tid: data.id, at: Date.now() });
+    }
   } catch (e) {
     // 接管失败 → 还给浏览器，避免文件丢失
     try {
