@@ -56,6 +56,10 @@
   .upd-txt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .upd a { flex:none; font-size:12px; }
   .upd .sep { color:#c7d2fe; }
+  .lastreplay { display:none; margin:2px 0 8px; padding:6px 8px; border-radius:8px;
+                font-size:11px; color:var(--muted); background:var(--card);
+                border:1px solid var(--line); }
+  .lastreplay.show { display:block; }
   @media (prefers-color-scheme: dark) {
     .upd { border-color:#3730a3; background:#1e1b4b; color:#c7d2fe; }
     .upd .sep { color:#4338ca; }
@@ -91,6 +95,8 @@
   <div class="card">
     <div class="rows" id="rows"><div class="empty">暂无任务</div></div>
   </div>
+
+  <div class="lastreplay" id="lastreplay"></div>
 </div>
 
 <footer>

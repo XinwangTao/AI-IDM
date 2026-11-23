@@ -12,7 +12,26 @@ let cfg = { ...DEFAULTS };
 let currentUrl = "";
 
 const UPDATE_KEY = "update_state";
+const LAST_REPLAY_KEY = "lastReplay";
 const RELEASE_PAGE = "https://github.com/XinwangTao/AI-IDM/releases";
+
+/** 上次拦截历史重放的记录（background 写入）：只显示一行纯文字，不做操作入口。 */
+async function renderLastReplay() {
+  const box = $("#lastreplay");
+  if (!box) return;
+  let st = null;
+  try {
+    const got = await chrome.storage.local.get(LAST_REPLAY_KEY);
+    st = got[LAST_REPLAY_KEY] || null;
+  } catch (_) { /* 读不到就不显示 */ }
+  if (!st || !st.at || !st.count) { box.classList.remove("show"); return; }
+  const d = new Date(st.at);
+  const p2 = (n) => String(n).padStart(2, "0");
+  const when = `${p2(d.getMonth() + 1)}-${p2(d.getDate())} `
+             + `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  box.textContent = `上次拦截浏览器重放的历史下载：${when}，共 ${st.count} 个（未重复下载）`;
+  box.classList.add("show");
+}
 
 function cmpVersion(a, b) {
   const pa = String(a || "0").split(".");
@@ -315,6 +334,7 @@ $("#rows").addEventListener("click", async (e) => {
     .then((st) => { if (st) renderUpdate(st); })
     .catch(() => { /* worker 没响应：保留上次状态 */ });
   loadAppUpdate();                                      // 服务端更新：查一次，不阻塞首屏
+  renderLastReplay();                                   // 上次拦截记录：本地读，不阻塞
   await refresh();
   setInterval(refresh, REFRESH_MS);
 })();

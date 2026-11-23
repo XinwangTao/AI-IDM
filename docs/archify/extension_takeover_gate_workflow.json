@@ -2,7 +2,7 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "自动接管门禁 v3：新增历史重放拦截",
+    "title": "自动接管门禁 v4：历史重放加固",
     "locale": "zh-CN",
     "quality_profile": "showcase"
   },
@@ -57,8 +57,9 @@
       "col": 2,
       "type": "security",
       "label": "重放检测",
-      "sublabel": "3 秒内 ≥5 个？",
-      "tag": "新增"
+      "sublabel": "3s≥5 / 60s≥20",
+      "tag": "加固·持久",
+      "width": 130
     },
     {
       "id": "n4",
@@ -101,22 +102,33 @@
       "sublabel": "/ping 失败不动"
     },
     {
-      "id": "f3",
-      "lane": "exceptions",
-      "col": 5,
-      "type": "external",
-      "label": "转交回退",
-      "sublabel": "交回浏览器"
-    },
-    {
       "id": "f4",
       "lane": "exceptions",
       "col": 3,
       "type": "security",
       "label": "拦截历史重放",
-      "sublabel": "取消 + 不入队 + 撤销本批",
+      "sublabel": "取消+撤回+续锁+清残留",
+      "tag": "加固",
+      "width": 150
+    },
+    {
+      "id": "f5",
+      "lane": "exceptions",
+      "col": 4,
+      "type": "frontend",
+      "label": "拦截记录",
+      "sublabel": "弹窗一行 + 单条通知",
       "tag": "新增",
-      "width": 100
+      "width": 140
+    },
+    {
+      "id": "f3",
+      "lane": "exceptions",
+      "col": 5,
+      "type": "external",
+      "label": "转交回退",
+      "sublabel": "疑似重放窗口不回退",
+      "width": 140
     }
   ],
   "edges": [
@@ -167,6 +179,16 @@
       "to": "f4",
       "label": "判定为重放",
       "variant": "security"
+    },
+    {
+      "from": "f4",
+      "to": "f5",
+      "label": "记录并提示"
+    },
+    {
+      "from": "f4",
+      "to": "n5",
+      "label": "撤回已入队"
     }
   ]
 }

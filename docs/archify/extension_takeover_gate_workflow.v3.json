@@ -1,0 +1,172 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "自动接管门禁 v3：新增历史重放拦截",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "browser",
+      "label": "浏览器侧"
+    },
+    {
+      "id": "gate",
+      "label": "扩展接管门禁"
+    },
+    {
+      "id": "service",
+      "label": "AI-IDM 服务"
+    },
+    {
+      "id": "exceptions",
+      "label": "不接管 / 兜底",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6"
+  ],
+  "nodes": [
+    {
+      "id": "n1",
+      "lane": "browser",
+      "col": 0,
+      "type": "external",
+      "label": "浏览器下载创建",
+      "sublabel": "downloads.onCreated"
+    },
+    {
+      "id": "n2",
+      "lane": "gate",
+      "col": 1,
+      "type": "security",
+      "label": "基础门禁",
+      "sublabel": "5 项前置校验",
+      "width": 120
+    },
+    {
+      "id": "n3",
+      "lane": "gate",
+      "col": 2,
+      "type": "security",
+      "label": "重放检测",
+      "sublabel": "3 秒内 ≥5 个？",
+      "tag": "新增"
+    },
+    {
+      "id": "n4",
+      "lane": "gate",
+      "col": 3,
+      "type": "frontend",
+      "label": "抢占",
+      "sublabel": "cancel + erase"
+    },
+    {
+      "id": "n5",
+      "lane": "service",
+      "col": 4,
+      "type": "backend",
+      "label": "转交入队",
+      "sublabel": "POST /add"
+    },
+    {
+      "id": "n6",
+      "lane": "service",
+      "col": 5,
+      "type": "backend",
+      "label": "接管完成",
+      "sublabel": "进入跟踪流程"
+    },
+    {
+      "id": "f1",
+      "lane": "exceptions",
+      "col": 1,
+      "type": "external",
+      "label": "保留浏览器下载",
+      "sublabel": "静默放过"
+    },
+    {
+      "id": "f2",
+      "lane": "exceptions",
+      "col": 2,
+      "type": "external",
+      "label": "服务离线",
+      "sublabel": "/ping 失败不动"
+    },
+    {
+      "id": "f3",
+      "lane": "exceptions",
+      "col": 5,
+      "type": "external",
+      "label": "转交回退",
+      "sublabel": "交回浏览器"
+    },
+    {
+      "id": "f4",
+      "lane": "exceptions",
+      "col": 3,
+      "type": "security",
+      "label": "拦截历史重放",
+      "sublabel": "取消 + 不入队 + 撤销本批",
+      "tag": "新增",
+      "width": 100
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "label": "全部通过"
+    },
+    {
+      "from": "n3",
+      "to": "n4",
+      "label": "正常下载"
+    },
+    {
+      "from": "n4",
+      "to": "n5"
+    },
+    {
+      "from": "n5",
+      "to": "n6"
+    },
+    {
+      "from": "n2",
+      "to": "f1",
+      "label": "门禁不过"
+    },
+    {
+      "from": "n2",
+      "to": "f2",
+      "label": "离线"
+    },
+    {
+      "from": "n4",
+      "to": "f1",
+      "label": "取消失败"
+    },
+    {
+      "from": "n5",
+      "to": "f3",
+      "label": "转交失败"
+    },
+    {
+      "from": "n3",
+      "to": "f4",
+      "label": "判定为重放",
+      "variant": "security"
+    }
+  ]
+}
