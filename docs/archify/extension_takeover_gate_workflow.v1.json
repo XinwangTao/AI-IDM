@@ -1,0 +1,40 @@
+{
+  "name": "extension_takeover_gate",
+  "title": "自动接管门禁（v2：回环任意端口 + Edge 更新域名）",
+  "kind": "workflow",
+  "status": "待确认（L1-C）",
+  "created": "2026-10-21",
+  "version_note": "本图首次为自动接管主流程建图，用于承载门禁加固批；门禁现状行为均如实入图，v2 变化点已标注。",
+  "batch": {
+    "in_scope": [
+      "background.js：自动接管的回环豁免从『硬编码 13391 端口』放宽为『回环任意端口』（URL 解析 hostname：127.0.0.1 / localhost / [::1] / ::1；解析失败退回字符串包含匹配）",
+      "background.js：SKIP_PATTERNS 补 Edge 更新域名 3 条（edge.microsoft.com / msedge.api.cdp.microsoft.com / msedge.b.tlu.dl.delivery.mp.microsoft.com）",
+      "取消/erase 时序（900ms/600ms）、其余门禁条件与全部回退路径不动"
+    ],
+    "out_of_scope": [
+      "content.js / server.py / engine.py 任何改动",
+      "手动模式与右键/弹窗入口（它们不经过本门禁）",
+      "接管后的跟踪流程（见 extension_tracking_workflow）"
+    ]
+  },
+  "nodes": [
+    { "id": "n1", "kind": "start", "label": "浏览器下载创建", "note": "chrome.downloads.onCreated(item)；仅 mode=auto 进���本流程" },
+    { "id": "n2", "kind": "decision", "label": "门禁判定", "note": "① scheme ∈ http/https/ftp/ftps；② 非本扩展自己的回退下载；③ 非回环来源（v2：任意端口，不限 13391）；④ 非浏览器/商店/Edge 更新包（v2：补 Edge 域名）；⑤ 服务在线（/ping 900ms）" },
+    { "id": "n3", "kind": "step", "label": "抢占", "note": "chrome.downloads.cancel(item.id)；成功后延迟清理 .crdownload 残留（900ms/600ms，现状保持）" },
+    { "id": "n4", "kind": "step", "label": "转交", "note": "send() → POST /add（referer/filename/cookie），返回 tid → 进入 1.3.0 跟踪流程（衔接 extension_tracking_workflow，图外）" },
+    { "id": "n5", "kind": "end", "label": "接管完成", "note": "任务已入队并跟踪；浏览器侧下载项已被清除" },
+    { "id": "f1", "kind": "fallback", "label": "保留浏览器下载", "note": "其余门禁不过，或取消失败（已下完/取消不掉）→ 不抢，静默保留（现状）" },
+    { "id": "f2", "kind": "fallback", "label": "服务离线", "note": "/ping 失败 → 不动浏览器下载（现状：宁可放过不可抢错）" },
+    { "id": "f3", "kind": "fallback", "label": "转交回退", "note": "send 失败 → 浏览器重新下载该 URL + 「接管失败」通知（现状保持）" }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3", "label": "全部通过" },
+    { "from": "n2", "to": "f1", "label": "其余门禁不过" },
+    { "from": "n2", "to": "f2", "label": "服务离线" },
+    { "from": "n3", "to": "n4" },
+    { "from": "n3", "to": "f1", "label": "取消失败" },
+    { "from": "n4", "to": "n5" },
+    { "from": "n4", "to": "f3", "label": "转交失败" }
+  ]
+}

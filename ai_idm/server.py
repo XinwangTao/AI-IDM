@@ -353,6 +353,7 @@ class TakeoverServer:
         self.q = queue or Queue()
         self.events = collections.deque(maxlen=200)
         self.hls_tasks = {}
+        self.pending_purge = set()      # 已取消、等任务真正停下后再清临时残留的 tid
         self._hls_lock = threading.Lock()
         self._batch_job = None
         self._batch_lock = threading.Lock()
@@ -507,7 +508,8 @@ class TakeoverServer:
                     code, obj = app.batch_cancel()
                     return self._json(code, obj)
                 if path.startswith("/cancel/"):
-                    return self._handle_cancel(path.rsplit("/", 1)[-1])
+                    purge = str((qs.get("purge") or [""])[0]).lower() in ("1", "true", "yes")
+                    return self._handle_cancel(path.rsplit("/", 1)[-1], purge)
                 if path.startswith("/remove/"):
                     ok = app.q.remove(path.rsplit("/", 1)[-1])
                     return self._json(200, {"ok": ok})
@@ -595,15 +597,24 @@ class TakeoverServer:
                 return self._json(code, obj)
 
 
-            def _handle_cancel(self, tid):
+            def _handle_cancel(self, tid, purge=False):
+                # purge=1：调用方明确表示"这个文件我本来就有，别留临时残留"
+                # （浏览器重放历史时由扩展传入）。只删 .idmpart / .idmpart.json，
+                # 已经下完的正式文件永远不碰。
                 if app.runner and app.runner.cancel(tid):
+                    if purge:
+                        app.purge_after_cancel(tid, active=True)
                     return self._json(200, {"ok": True, "id": tid, "status": "cancelling"})
                 row = app.get_task(tid)
                 if row is None:
                     return self._json(404, {"ok": False, "error": "任务不存在"})
                 if row["status"] == "pending":
                     app.q.update(tid, status="cancelled", finished_at=time.time())
+                    if purge:
+                        app.purge_after_cancel(tid)
                     return self._json(200, {"ok": True, "id": tid, "status": "cancelled"})
+                if purge:
+                    app.purge_after_cancel(tid)
                 return self._json(409, {"ok": False, "error": f"任务已是 {row['status']}"})
 
             def _handle_reveal(self, p):
@@ -668,6 +679,13 @@ class TakeoverServer:
     def push_event(self, evt):
         try:
             self.events.append({"ts": round(time.time(), 3), **evt})
+            # 取消类的 purge 请求：任务真停下来之前文件可能还被占用，
+            # 这里补删一次，保证残留不会留在盘上。
+            if evt.get("event") in ("cancelled", "done", "error"):
+                tid = evt.get("id")
+                if tid and tid in self.pending_purge:
+                    self.pending_purge.discard(tid)
+                    self.purge_after_cancel(tid)
         except Exception:                                    # noqa: BLE001
             pass
 
@@ -681,6 +699,36 @@ class TakeoverServer:
             row = dict(row)
             row["percent"] = round((row.get("downloaded") or 0) / total * 100, 2) if total else 0
         return row
+
+    def purge_after_cancel(self, tid, active=False):
+        """取消后清掉未完成的临时残留（.idmpart / .idmpart.json）。
+
+        调用方必须显式要求（/cancel/<tid>?purge=1，浏览器重放历史时由扩展传入）：
+        这些文件本地本来就有，残留只会白占磁盘。正式文件永不触碰。
+        active=True 表示任务还在收尾，文件可能仍被占用：先登记，等 cancelled
+        事件到了再删一次。
+        """
+        row = self.get_task(tid)
+        if not row:
+            return 0
+        dest = row.get("dest") or ""
+        if not dest:
+            return 0
+        if active:
+            self.pending_purge.add(tid)
+            return 0
+        if self.download_dir and not os.path.isabs(dest) and not os.path.dirname(dest):
+            dest = os.path.join(self.download_dir, dest)
+        removed = 0
+        for suffix in (".idmpart", ".idmpart.json"):
+            try:
+                p = dest + suffix
+                if os.path.isfile(p):
+                    os.remove(p)
+                    removed += 1
+            except OSError:
+                pass
+        return removed
 
     def status(self, limit=100):
         rows = []
